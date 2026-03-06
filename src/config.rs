@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -5,6 +7,16 @@ pub struct Config {
     pub show_hidden: bool,
     pub last_left_dir: Option<String>,
     pub last_right_dir: Option<String>,
+    #[serde(default)]
+    pub drive_dirs: HashMap<String, String>,
+    #[serde(default)]
+    pub window_x: Option<f32>,
+    #[serde(default)]
+    pub window_y: Option<f32>,
+    #[serde(default)]
+    pub window_width: Option<f32>,
+    #[serde(default)]
+    pub window_height: Option<f32>,
 }
 
 impl Default for Config {
@@ -13,6 +25,11 @@ impl Default for Config {
             show_hidden: false,
             last_left_dir: None,
             last_right_dir: None,
+            drive_dirs: HashMap::new(),
+            window_x: None,
+            window_y: None,
+            window_width: None,
+            window_height: None,
         }
     }
 }

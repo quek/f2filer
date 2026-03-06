@@ -5,7 +5,7 @@ use eframe::egui;
 use crate::config::Config;
 use crate::dialog::*;
 use crate::file_ops;
-use crate::image_viewer::{self, ImagePreview};
+use crate::image_viewer::{self, ImageCache, ImagePreview};
 use crate::panel::FilePanel;
 use crate::viewer::FileViewer;
 
@@ -22,16 +22,22 @@ pub struct F2App {
     dialog: DialogState,
     viewer: Option<FileViewer>,
     image_preview: Option<ImagePreview>,
+    image_cache: ImageCache,
     preview_mode: bool,
     command_line: String,
     command_mode: bool,
     status_message: String,
     drives: Vec<String>,
     config: Config,
+    window_pos: Option<egui::Pos2>,
+    window_size: Option<egui::Vec2>,
 }
 
 impl F2App {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Load HackGen font
+        setup_fonts(&cc.egui_ctx);
+
         let config = Config::load();
 
         let left_dir = config
@@ -61,11 +67,14 @@ impl F2App {
             dialog: DialogState::default(),
             viewer: None,
             image_preview: None,
+            image_cache: ImageCache::new(),
             preview_mode: false,
             command_line: String::new(),
             command_mode: false,
             status_message: String::new(),
             drives,
+            window_pos: None,
+            window_size: None,
             config,
         }
     }
@@ -99,14 +108,15 @@ impl F2App {
     }
 
     fn update_image_preview(&mut self, ctx: &egui::Context) {
-        if let Some(entry) = self.active_panel().current_entry() {
-            if !entry.is_dir && image_viewer::is_image_file(&entry.path) {
-                self.image_preview = ImagePreview::load(ctx, &entry.path);
-            } else {
-                self.image_preview = None;
-            }
+        let target = self.active_panel().current_entry()
+            .filter(|e| !e.is_dir && image_viewer::is_image_file(&e.path))
+            .map(|e| e.path.clone());
+
+        if let Some(path) = target {
+            self.image_preview = self.image_cache.get_or_load(ctx, &path);
         } else {
             self.image_preview = None;
+            self.image_cache.clear_wanted();
         }
     }
 
@@ -115,7 +125,36 @@ impl F2App {
             Some(self.left_panel.current_dir.to_string_lossy().to_string());
         self.config.last_right_dir =
             Some(self.right_panel.current_dir.to_string_lossy().to_string());
+        // Save per-drive last directory
+        for panel_dir in [&self.left_panel.current_dir, &self.right_panel.current_dir] {
+            if let Some(drive) = drive_letter(panel_dir) {
+                self.config.drive_dirs.insert(
+                    drive,
+                    panel_dir.to_string_lossy().to_string(),
+                );
+            }
+        }
+        // Save window position and size
+        if let Some(pos) = self.window_pos {
+            self.config.window_x = Some(pos.x);
+            self.config.window_y = Some(pos.y);
+        }
+        if let Some(size) = self.window_size {
+            self.config.window_width = Some(size.x);
+            self.config.window_height = Some(size.y);
+        }
         self.config.save();
+    }
+
+    /// Resolve drive path: use saved per-drive directory if available, otherwise drive root.
+    fn resolve_drive_path(&self, drive: &str) -> PathBuf {
+        if let Some(saved) = self.config.drive_dirs.get(drive) {
+            let path = PathBuf::from(saved);
+            if path.exists() {
+                return path;
+            }
+        }
+        PathBuf::from(format!("{}\\", drive))
     }
 
     fn handle_keyboard(&mut self, ctx: &egui::Context) {
@@ -201,6 +240,7 @@ impl F2App {
                 if entry.is_dir {
                     let dir = entry.path.clone();
                     self.active_panel_mut().navigate_to(dir);
+                    self.save_config();
                 } else {
                     open::that(&entry.path).ok();
                 }
@@ -212,6 +252,7 @@ impl F2App {
             if let Some(parent) = self.active_panel().current_dir.parent().map(|p| p.to_path_buf())
             {
                 self.active_panel_mut().navigate_to(parent);
+                self.save_config();
             }
         }
 
@@ -383,6 +424,7 @@ impl F2App {
             let dir = self.active_panel().current_dir.clone();
             self.inactive_panel_mut().navigate_to(dir);
             self.status_message = "Synced opposite panel".to_string();
+            self.save_config();
         }
 
         // ?: show help
@@ -514,9 +556,10 @@ PgUp / PgDn    :  Page scroll
                 }
             }
             DialogResult::DriveSelected(drive) => {
-                let path = PathBuf::from(format!("{}\\", drive));
+                let path = self.resolve_drive_path(&drive);
                 if path.exists() {
                     self.active_panel_mut().navigate_to(path);
+                    self.save_config();
                 }
             }
             _ => {}
@@ -526,11 +569,28 @@ PgUp / PgDn    :  Page scroll
 
 impl eframe::App for F2App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Track window position and size
+        ctx.input(|i| {
+            if let Some(rect) = i.viewport().outer_rect {
+                self.window_pos = Some(rect.min);
+            }
+            if let Some(rect) = i.viewport().inner_rect {
+                self.window_size = Some(rect.size());
+            }
+        });
+
         // Apply dark mode
         ctx.set_visuals(egui::Visuals::dark());
 
         // Handle keyboard input
         self.handle_keyboard(ctx);
+
+        // Poll background image loading
+        if self.preview_mode {
+            if let Some(preview) = self.image_cache.poll_loaded(ctx) {
+                self.image_preview = Some(preview);
+            }
+        }
 
         // Handle dialog results
         let result = show_dialogs(ctx, &mut self.dialog);
@@ -550,9 +610,10 @@ impl eframe::App for F2App {
             ui.horizontal(|ui| {
                 for drive in &self.drives.clone() {
                     if ui.button(drive).clicked() {
-                        let path = PathBuf::from(format!("{}\\", drive));
+                        let path = self.resolve_drive_path(drive);
                         if path.exists() {
                             self.active_panel_mut().navigate_to(path);
+                            self.save_config();
                         }
                     }
                 }
@@ -710,6 +771,16 @@ fn default_dir() -> PathBuf {
     })
 }
 
+/// Extract drive letter (e.g. "C:") from a path like "C:\Users\foo".
+fn drive_letter(path: &std::path::Path) -> Option<String> {
+    let s = path.to_string_lossy();
+    if s.len() >= 2 && s.as_bytes()[1] == b':' {
+        Some(s[..2].to_uppercase())
+    } else {
+        None
+    }
+}
+
 fn format_size_short(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
@@ -758,4 +829,34 @@ struct KeyState {
     p: bool,
     f: bool,
     v: bool,
+}
+
+fn setup_fonts(ctx: &egui::Context) {
+    let font_path = std::path::Path::new(
+        r"C:\Users\ancient\AppData\Local\Microsoft\Windows\Fonts\HackGenConsoleNF-Regular.ttf",
+    );
+
+    if let Ok(font_data) = std::fs::read(font_path) {
+        let mut fonts = egui::FontDefinitions::default();
+
+        fonts.font_data.insert(
+            "HackGen".to_string(),
+            egui::FontData::from_owned(font_data).into(),
+        );
+
+        // Set HackGen as the primary font for both proportional and monospace
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "HackGen".to_string());
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "HackGen".to_string());
+
+        ctx.set_fonts(fonts);
+    }
 }
