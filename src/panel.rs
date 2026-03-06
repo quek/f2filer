@@ -6,21 +6,85 @@ use eframe::egui;
 use crate::file_item::{read_directory, FileItem};
 use crate::sort::{sort_entries, SortKey, SortOrder};
 
-/// Truncate a string in the middle with "…" if it exceeds max_chars.
+/// Display width of a character (2 for CJK/fullwidth, 1 otherwise).
+fn char_display_width(c: char) -> usize {
+    let cp = c as u32;
+    // CJK Unified Ideographs, Hiragana, Katakana, Hangul, fullwidth forms, etc.
+    if matches!(cp,
+        0x1100..=0x115F   // Hangul Jamo
+        | 0x2E80..=0x303E // CJK Radicals, Kangxi, Ideographic Description, CJK Symbols
+        | 0x3041..=0x33BF // Hiragana, Katakana, Bopomofo, Hangul Compat, Kanbun, CJK Letters
+        | 0x3400..=0x4DBF // CJK Unified Ideographs Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xA000..=0xA4CF // Yi
+        | 0xAC00..=0xD7AF // Hangul Syllables
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0xFE30..=0xFE6F // CJK Compatibility Forms
+        | 0xFF01..=0xFF60 // Fullwidth Forms
+        | 0xFFE0..=0xFFE6 // Fullwidth Signs
+        | 0x20000..=0x2FA1F // CJK Extensions B-F, Compat Supplement
+    ) {
+        2
+    } else {
+        1
+    }
+}
+
+/// Display width of a string (accounts for fullwidth characters).
+fn str_display_width(s: &str) -> usize {
+    s.chars().map(char_display_width).sum()
+}
+
+/// Truncate a string in the middle with "…" if it exceeds max display width.
 /// Shows the beginning and end of the string to preserve useful info.
-fn truncate_middle(s: &str, max_chars: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
+fn truncate_middle(s: &str, max_width: usize) -> String {
+    if str_display_width(s) <= max_width {
         return s.to_string();
     }
-    if max_chars <= 3 {
-        return s.chars().take(max_chars).collect();
+    if max_width <= 3 {
+        let mut result = String::new();
+        let mut w = 0;
+        for c in s.chars() {
+            let cw = char_display_width(c);
+            if w + cw > max_width {
+                break;
+            }
+            result.push(c);
+            w += cw;
+        }
+        return result;
     }
-    let keep = max_chars - 1; // 1 char for "…"
-    let front = (keep + 1) / 2;
-    let back = keep - front;
-    let front_str: String = s.chars().take(front).collect();
-    let back_str: String = s.chars().rev().take(back).collect::<Vec<_>>().into_iter().rev().collect();
+    let keep = max_width - 1; // 1 col for "…"
+    let front_budget = (keep + 1) / 2;
+    let back_budget = keep - front_budget;
+
+    // Build front part
+    let mut front_str = String::new();
+    let mut front_w = 0;
+    for c in s.chars() {
+        let cw = char_display_width(c);
+        if front_w + cw > front_budget {
+            break;
+        }
+        front_str.push(c);
+        front_w += cw;
+    }
+
+    // Build back part (collect from end)
+    let chars: Vec<char> = s.chars().collect();
+    let mut back_chars = Vec::new();
+    let mut back_w = 0;
+    for &c in chars.iter().rev() {
+        let cw = char_display_width(c);
+        if back_w + cw > back_budget {
+            break;
+        }
+        back_chars.push(c);
+        back_w += cw;
+    }
+    back_chars.reverse();
+    let back_str: String = back_chars.into_iter().collect();
+
     format!("{}…{}", front_str, back_str)
 }
 
@@ -164,7 +228,7 @@ impl FilePanel {
         if count == 0 {
             return;
         }
-        let new = (self.cursor as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        let new = (self.cursor as i32 + delta).rem_euclid(count as i32) as usize;
         self.cursor = new;
     }
 
@@ -533,6 +597,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn char_width_ascii() {
+        assert_eq!(char_display_width('A'), 1);
+        assert_eq!(char_display_width(' '), 1);
+    }
+
+    #[test]
+    fn char_width_cjk() {
+        assert_eq!(char_display_width('あ'), 2);
+        assert_eq!(char_display_width('漢'), 2);
+        assert_eq!(char_display_width('ア'), 2);
+    }
+
+    #[test]
+    fn str_width() {
+        assert_eq!(str_display_width("hello"), 5);
+        assert_eq!(str_display_width("あいう"), 6);
+        assert_eq!(str_display_width("aあb"), 4); // 1+2+1
+    }
+
+    #[test]
     fn truncate_middle_short_string() {
         assert_eq!(truncate_middle("hello", 10), "hello");
         assert_eq!(truncate_middle("hi", 2), "hi");
@@ -546,7 +630,7 @@ mod tests {
     #[test]
     fn truncate_middle_needs_truncation() {
         let result = truncate_middle("abcdefghij", 7);
-        // keep=6, front=(6+1)/2=3, back=3 → "abc…hij"
+        // keep=6, front=3, back=3 → "abc…hij"
         assert_eq!(result, "abc…hij");
     }
 
@@ -559,10 +643,32 @@ mod tests {
 
     #[test]
     fn truncate_middle_japanese() {
-        let s = "あいうえおかきくけこ"; // 10 chars
-        let result = truncate_middle(s, 7);
-        // keep=6, front=(6+1)/2=3, back=3 → "あいう…くけこ"
+        // "あいうえお" = width 10, max_width=7
+        let result = truncate_middle("あいうえお", 7);
+        // keep=6, front_budget=3 → "あ"(w=2), back_budget=3 → "お"(w=2)
+        assert_eq!(result, "あ…お");
+    }
+
+    #[test]
+    fn truncate_middle_japanese_wider() {
+        // "あいうえおかきくけこ" = width 20, max_width=14
+        let result = truncate_middle("あいうえおかきくけこ", 14);
+        // keep=13, front_budget=7 → "あいう"(w=6), back_budget=6 → "くけこ"(w=6)
         assert_eq!(result, "あいう…くけこ");
+    }
+
+    #[test]
+    fn truncate_middle_mixed() {
+        // "abc漢字def" = 1+1+1+2+2+1+1+1 = 10, max_width=7
+        let result = truncate_middle("abc漢字def", 7);
+        // keep=6, front_budget=3 → "abc"(w=3), back_budget=3 → "def"(w=3)
+        assert_eq!(result, "abc…def");
+    }
+
+    #[test]
+    fn truncate_middle_japanese_no_truncate() {
+        // "あいう" = width 6, max_width=6
+        assert_eq!(truncate_middle("あいう", 6), "あいう");
     }
 
     #[test]
