@@ -16,7 +16,14 @@
       "Bash(git add Cargo.toml Cargo.lock src/audio_viewer.rs src/main.rs src/app.rs src/config.rs src/dialog.rs .claude/settings.local.json)",
       "Bash(git add src/audio_viewer.rs src/app.rs .claude/settings.local.json)",
       "Bash(git commit:*)",
-      "Bash(git add README.md CLAUDE.md .claude/settings.local.json)"
+      "Bash(git add README.md CLAUDE.md .claude/settings.local.json)",
+      "Bash(git push)",
+      "Bash(wc -l F:/dev/f2filer/src/*.rs)",
+      "Bash(xargs grep -l \"DroppedFile\\\\|HoveredFile\")",
+      "Bash(xargs grep -l \"ViewportBuilder\")",
+      "Bash(xargs grep -l \"pub struct Sense\")",
+      "Bash(xargs grep -l \"implement\")",
+      "Bash(xargs grep -l \"GlobalFree\")"
     ]
   }
 }
