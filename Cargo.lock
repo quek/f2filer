@@ -1307,6 +1307,7 @@ dependencies = [
 name = "f2filer"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "chrono",
  "eframe",
  "hound",

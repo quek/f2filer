@@ -269,6 +269,7 @@ impl F2App {
                 shift_u: i.key_pressed(egui::Key::U) && i.modifiers.shift,
                 z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
                 shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
+                y: i.key_pressed(egui::Key::Y) && !i.modifiers.shift && !i.modifiers.ctrl,
             }
         });
 
@@ -507,6 +508,25 @@ impl F2App {
             self.inactive_panel_mut().navigate_to(dir);
             self.status_message = "Synced opposite panel".to_string();
             self.save_config();
+        }
+
+        // y: copy current file path to clipboard
+        if input.y {
+            if let Some(entry) = self.active_panel().current_entry() {
+                let path_str = entry.path.to_string_lossy().to_string();
+                match arboard::Clipboard::new() {
+                    Ok(mut clip) => {
+                        if clip.set_text(&path_str).is_ok() {
+                            self.status_message = format!("Copied: {}", path_str);
+                        } else {
+                            self.status_message = "Failed to copy to clipboard".to_string();
+                        }
+                    }
+                    Err(_) => {
+                        self.status_message = "Failed to access clipboard".to_string();
+                    }
+                }
+            }
         }
 
         // ?: show help
@@ -1348,6 +1368,7 @@ struct KeyState {
     shift_d: bool,
     z: bool,
     shift_z: bool,
+    y: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {
