@@ -10,6 +10,7 @@ use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
 use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
+use crate::undo::{FileOperation, UndoHistory};
 use crate::viewer::FileViewer;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -36,6 +37,7 @@ pub struct F2App {
     config: Config,
     window_pos: Option<egui::Pos2>,
     window_size: Option<egui::Vec2>,
+    undo_history: UndoHistory,
 }
 
 impl F2App {
@@ -68,6 +70,7 @@ impl F2App {
             window_pos: None,
             window_size: None,
             config,
+            undo_history: UndoHistory::new(),
         }
     }
 
@@ -262,6 +265,8 @@ impl F2App {
                 shift_g: i.key_pressed(egui::Key::G) && i.modifiers.shift,
                 u: i.key_pressed(egui::Key::U) && !i.modifiers.shift && !i.modifiers.ctrl,
                 shift_u: i.key_pressed(egui::Key::U) && i.modifiers.shift,
+                z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
+                shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
             }
         });
 
@@ -381,7 +386,18 @@ impl F2App {
                 let conflicts = file_ops::check_conflicts(&sources, &dest);
 
                 if conflicts.is_empty() {
-                    self.status_message = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir(s, &dest));
+                    let (msg, succeeded) = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir(s, &dest));
+                    self.status_message = msg;
+                    if !succeeded.is_empty() {
+                        let created: Vec<PathBuf> = succeeded.iter()
+                            .filter_map(|s| s.file_name().map(|n| dest.join(n)))
+                            .collect();
+                        self.undo_history.push(FileOperation::Copy {
+                            sources: succeeded,
+                            dest_dir: dest,
+                            created,
+                        });
+                    }
                     self.active_panel_mut().deselect_all();
                     self.inactive_panel_mut().refresh();
                 } else {
@@ -406,7 +422,14 @@ impl F2App {
                 let conflicts = file_ops::check_conflicts(&sources, &dest);
 
                 if conflicts.is_empty() {
-                    self.status_message = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir(s, &dest));
+                    let (msg, succeeded) = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir(s, &dest));
+                    self.status_message = msg;
+                    if !succeeded.is_empty() {
+                        let moves: Vec<(PathBuf, PathBuf)> = succeeded.iter()
+                            .filter_map(|s| s.file_name().map(|n| (s.clone(), dest.join(n))))
+                            .collect();
+                        self.undo_history.push(FileOperation::Move { moves });
+                    }
                     self.active_panel_mut().refresh();
                     self.inactive_panel_mut().refresh();
                 } else {
@@ -489,6 +512,8 @@ g              :  Registered directories
 Shift+G        :  Register current directory
 Shift+U        :  Zip compress selected
 u              :  Zip extract at cursor
+z              :  Undo last operation
+Shift+Z        :  Redo
 v              :  Image/Audio preview
 F3             :  Text viewer
 Ctrl+R         :  Refresh
@@ -567,10 +592,15 @@ PgUp / PgDn    :  Page scroll
                         .map(|e| e.to_lowercase() == "zip")
                         .unwrap_or(false);
                     if is_zip {
+                        let zip_path = entry.path.clone();
                         let dest = self.inactive_panel().current_dir.clone();
-                        match file_ops::decompress_zip(&entry.path, &dest) {
+                        match file_ops::decompress_zip(&zip_path, &dest) {
                             Ok(extract_dir) => {
                                 self.status_message = format!("Extracted to: {}", extract_dir.display());
+                                self.undo_history.push(FileOperation::Decompress {
+                                    zip_path,
+                                    extracted_dir: extract_dir,
+                                });
                                 self.inactive_panel_mut().refresh();
                             }
                             Err(e) => {
@@ -578,6 +608,34 @@ PgUp / PgDn    :  Page scroll
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // z: undo
+        if input.z {
+            match self.undo_history.undo() {
+                Ok(msg) => {
+                    self.status_message = msg;
+                    self.left_panel.refresh();
+                    self.right_panel.refresh();
+                }
+                Err(msg) => {
+                    self.status_message = msg;
+                }
+            }
+        }
+
+        // Shift+z: redo
+        if input.shift_z {
+            match self.undo_history.redo() {
+                Ok(msg) => {
+                    self.status_message = msg;
+                    self.left_panel.refresh();
+                    self.right_panel.refresh();
+                }
+                Err(msg) => {
+                    self.status_message = msg;
                 }
             }
         }
@@ -624,7 +682,18 @@ PgUp / PgDn    :  Page scroll
 
         let conflicts = file_ops::check_conflicts(&dropped_files, &dest);
         if conflicts.is_empty() {
-            self.status_message = batch_op(&dropped_files, "Dropped", |s| file_ops::copy_file_or_dir(s, &dest));
+            let (msg, succeeded) = batch_op(&dropped_files, "Dropped", |s| file_ops::copy_file_or_dir(s, &dest));
+            self.status_message = msg;
+            if !succeeded.is_empty() {
+                let created: Vec<PathBuf> = succeeded.iter()
+                    .filter_map(|s| s.file_name().map(|n| dest.join(n)))
+                    .collect();
+                self.undo_history.push(FileOperation::Copy {
+                    sources: succeeded,
+                    dest_dir: dest,
+                    created,
+                });
+            }
             dest_panel.refresh();
         } else {
             self.dialog.confirm = Some(ConfirmDialog {
@@ -645,16 +714,40 @@ PgUp / PgDn    :  Page scroll
         match result {
             DialogResult::ConfirmYes(action) => match action {
                 ConfirmAction::Delete(paths) => {
-                    self.status_message = batch_op(&paths, "Deleted", file_ops::delete_to_trash);
+                    let (msg, succeeded) = batch_op(&paths, "Deleted", file_ops::delete_to_trash);
+                    self.status_message = msg;
+                    if !succeeded.is_empty() {
+                        self.undo_history.push(FileOperation::Delete {
+                            paths: succeeded,
+                        });
+                    }
                     self.active_panel_mut().refresh();
                 }
                 ConfirmAction::CopyOverwrite { sources, dest } => {
-                    self.status_message = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir_overwrite(s, &dest));
+                    let (msg, succeeded) = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir_overwrite(s, &dest));
+                    self.status_message = msg;
+                    if !succeeded.is_empty() {
+                        let created: Vec<PathBuf> = succeeded.iter()
+                            .filter_map(|s| s.file_name().map(|n| dest.join(n)))
+                            .collect();
+                        self.undo_history.push(FileOperation::Copy {
+                            sources: succeeded,
+                            dest_dir: dest,
+                            created,
+                        });
+                    }
                     self.active_panel_mut().deselect_all();
                     self.inactive_panel_mut().refresh();
                 }
                 ConfirmAction::MoveOverwrite { sources, dest } => {
-                    self.status_message = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir_overwrite(s, &dest));
+                    let (msg, succeeded) = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir_overwrite(s, &dest));
+                    self.status_message = msg;
+                    if !succeeded.is_empty() {
+                        let moves: Vec<(PathBuf, PathBuf)> = succeeded.iter()
+                            .filter_map(|s| s.file_name().map(|n| (s.clone(), dest.join(n))))
+                            .collect();
+                        self.undo_history.push(FileOperation::Move { moves });
+                    }
                     self.active_panel_mut().refresh();
                     self.inactive_panel_mut().refresh();
                 }
@@ -666,8 +759,12 @@ PgUp / PgDn    :  Page scroll
                 match action {
                     InputAction::Rename(old_path) => {
                         match file_ops::rename_file(&old_path, &value) {
-                            Ok(_) => {
+                            Ok(new_path) => {
                                 self.status_message = format!("Renamed to {}", value);
+                                self.undo_history.push(FileOperation::Rename {
+                                    old_path,
+                                    new_path,
+                                });
                                 self.active_panel_mut().refresh();
                             }
                             Err(e) => {
@@ -678,8 +775,9 @@ PgUp / PgDn    :  Page scroll
                     InputAction::NewDirectory => {
                         let dir = self.active_panel().current_dir.clone();
                         match file_ops::create_directory(&dir, &value) {
-                            Ok(_) => {
+                            Ok(path) => {
                                 self.status_message = format!("Created directory: {}", value);
+                                self.undo_history.push(FileOperation::CreateDir { path });
                                 self.active_panel_mut().refresh();
                             }
                             Err(e) => {
@@ -732,6 +830,10 @@ PgUp / PgDn    :  Page scroll
                                     .unwrap_or_default();
                                 self.status_message =
                                     format!("Compressed {} file(s) to {}", sources.len(), name);
+                                self.undo_history.push(FileOperation::Compress {
+                                    sources,
+                                    zip_path,
+                                });
                                 self.active_panel_mut().refresh();
                                 self.inactive_panel_mut().refresh();
                             }
@@ -1072,20 +1174,25 @@ fn first_char_upper(s: &str, fallback: char) -> String {
         .to_string()
 }
 
-fn batch_op<F, E>(paths: &[PathBuf], verb: &str, op: F) -> String
+fn batch_op<F, E>(paths: &[PathBuf], verb: &str, op: F) -> (String, Vec<PathBuf>)
 where
     F: Fn(&Path) -> Result<(), E>,
     E: std::fmt::Display,
 {
-    let errors: Vec<String> = paths
-        .iter()
-        .filter_map(|p| op(p).err().map(|e| e.to_string()))
-        .collect();
-    if errors.is_empty() {
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+    for p in paths {
+        match op(p) {
+            Ok(()) => succeeded.push(p.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    let msg = if errors.is_empty() {
         format!("{} {} item(s)", verb, paths.len())
     } else {
         format!("Errors: {}", errors.join(", "))
-    }
+    };
+    (msg, succeeded)
 }
 
 #[cfg(test)]
@@ -1116,29 +1223,33 @@ mod tests {
     #[test]
     fn batch_op_all_success() {
         let paths = vec![PathBuf::from("a"), PathBuf::from("b")];
-        let result = batch_op(&paths, "Processed", |_| Ok::<(), String>(()));
-        assert_eq!(result, "Processed 2 item(s)");
+        let (msg, succeeded) = batch_op(&paths, "Processed", |_| Ok::<(), String>(()));
+        assert_eq!(msg, "Processed 2 item(s)");
+        assert_eq!(succeeded.len(), 2);
     }
 
     #[test]
     fn batch_op_with_errors() {
         let paths = vec![PathBuf::from("a"), PathBuf::from("b")];
-        let result = batch_op(&paths, "Processed", |p| {
+        let (msg, succeeded) = batch_op(&paths, "Processed", |p| {
             if p == Path::new("a") {
                 Err("fail".to_string())
             } else {
                 Ok(())
             }
         });
-        assert!(result.starts_with("Errors:"));
-        assert!(result.contains("fail"));
+        assert!(msg.starts_with("Errors:"));
+        assert!(msg.contains("fail"));
+        assert_eq!(succeeded.len(), 1);
+        assert_eq!(succeeded[0], PathBuf::from("b"));
     }
 
     #[test]
     fn batch_op_empty() {
         let paths: Vec<PathBuf> = vec![];
-        let result = batch_op(&paths, "Done", |_| Ok::<(), String>(()));
-        assert_eq!(result, "Done 0 item(s)");
+        let (msg, succeeded) = batch_op(&paths, "Done", |_| Ok::<(), String>(()));
+        assert_eq!(msg, "Done 0 item(s)");
+        assert!(succeeded.is_empty());
     }
 
     #[test]
@@ -1207,6 +1318,8 @@ struct KeyState {
     shift_g: bool,
     u: bool,
     shift_u: bool,
+    z: bool,
+    shift_z: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {

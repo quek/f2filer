@@ -7,6 +7,7 @@ mod file_item;
 mod file_ops;
 mod panel;
 mod sort;
+mod undo;
 mod audio_viewer;
 mod image_viewer;
 mod video_viewer;
