@@ -140,7 +140,7 @@ impl F2App {
                 if let Some(ap) = &mut self.audio_preview {
                     ap.stop();
                 }
-                self.audio_preview = audio_viewer::load(&entry.path);
+                self.audio_preview = audio_viewer::load(&entry.path, ctx);
             }
         } else if image_viewer::is_image_file(&entry.path) {
             // Image file
