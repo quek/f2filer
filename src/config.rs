@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct RegisteredDir {
+    pub key: String, // shortcut key (single uppercase char)
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub show_hidden: bool,
     pub last_left_dir: Option<String>,
@@ -17,6 +24,8 @@ pub struct Config {
     pub window_width: Option<f32>,
     #[serde(default)]
     pub window_height: Option<f32>,
+    #[serde(default)]
+    pub registered_dirs: Vec<RegisteredDir>,
 }
 
 impl Default for Config {
@@ -30,6 +39,7 @@ impl Default for Config {
             window_y: None,
             window_width: None,
             window_height: None,
+            registered_dirs: Vec::new(),
         }
     }
 }

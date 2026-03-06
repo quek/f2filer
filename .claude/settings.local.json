@@ -10,7 +10,9 @@
       "Bash(git -C F:/dev/f2filer add CLAUDE.md src/app.rs src/config.rs src/image_viewer.rs src/main.rs src/panel.rs .claude/settings.local.json)",
       "Bash(git -C:*)",
       "Bash(timeout /t)",
-      "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2\")"
+      "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2\")",
+      "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")",
+      "Bash(git add Cargo.toml Cargo.lock src/audio_viewer.rs src/main.rs src/app.rs src/config.rs src/dialog.rs .claude/settings.local.json)"
     ]
   }
 }

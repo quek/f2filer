@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::config::Config;
 use crate::dialog::*;
 use crate::file_ops;
+use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
 use crate::panel::FilePanel;
 use crate::viewer::FileViewer;
@@ -23,6 +24,7 @@ pub struct F2App {
     viewer: Option<FileViewer>,
     image_preview: Option<ImagePreview>,
     image_cache: ImageCache,
+    audio_preview: Option<AudioPreview>,
     preview_mode: bool,
     command_line: String,
     command_mode: bool,
@@ -68,6 +70,7 @@ impl F2App {
             viewer: None,
             image_preview: None,
             image_cache: ImageCache::new(),
+            audio_preview: None,
             preview_mode: false,
             command_line: String::new(),
             command_mode: false,
@@ -107,16 +110,53 @@ impl F2App {
         }
     }
 
-    fn update_image_preview(&mut self, ctx: &egui::Context) {
-        let target = self.active_panel().current_entry()
-            .filter(|e| !e.is_dir && image_viewer::is_image_file(&e.path))
-            .map(|e| e.path.clone());
+    fn update_preview(&mut self, ctx: &egui::Context) {
+        let entry = self.active_panel().current_entry()
+            .filter(|e| !e.is_dir)
+            .cloned();
 
-        if let Some(path) = target {
-            self.image_preview = self.image_cache.get_or_load(ctx, &path);
-        } else {
+        let entry = match entry {
+            Some(e) => e,
+            None => {
+                self.image_preview = None;
+                self.image_cache.clear_wanted();
+                if let Some(ap) = &mut self.audio_preview {
+                    ap.stop();
+                }
+                self.audio_preview = None;
+                return;
+            }
+        };
+
+        if audio_viewer::is_audio_file(&entry.path) {
+            // Audio file
             self.image_preview = None;
             self.image_cache.clear_wanted();
+            // Only reload if different file
+            let already_loaded = self.audio_preview.as_ref()
+                .map(|ap| ap.title == entry.name)
+                .unwrap_or(false);
+            if !already_loaded {
+                if let Some(ap) = &mut self.audio_preview {
+                    ap.stop();
+                }
+                self.audio_preview = audio_viewer::load(&entry.path);
+            }
+        } else if image_viewer::is_image_file(&entry.path) {
+            // Image file
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
+            self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
+        } else {
+            // Neither
+            self.image_preview = None;
+            self.image_cache.clear_wanted();
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
         }
     }
 
@@ -203,6 +243,9 @@ impl F2App {
                 p: i.key_pressed(egui::Key::P),
                 f: i.key_pressed(egui::Key::F),
                 v: i.key_pressed(egui::Key::V) && !i.modifiers.ctrl,
+                enter: i.key_pressed(egui::Key::Enter),
+                g: i.key_pressed(egui::Key::G) && !i.modifiers.shift,
+                shift_g: i.key_pressed(egui::Key::G) && i.modifiers.shift,
             }
         });
 
@@ -234,8 +277,8 @@ impl F2App {
             self.active_panel_mut().page_down(20);
         }
 
-        // l: open dir / execute file
-        if input.l {
+        // l / Enter: open dir / execute file
+        if input.l || input.enter {
             if let Some(entry) = self.active_panel().current_entry().cloned() {
                 if entry.is_dir {
                     let dir = entry.path.clone();
@@ -295,14 +338,18 @@ impl F2App {
             }
         }
 
-        // v: toggle image preview mode
+        // v: toggle preview mode
         if input.v {
             if self.preview_mode {
                 self.preview_mode = false;
                 self.image_preview = None;
+                if let Some(ap) = &mut self.audio_preview {
+                    ap.stop();
+                }
+                self.audio_preview = None;
             } else {
                 self.preview_mode = true;
-                self.update_image_preview(ctx);
+                self.update_preview(ctx);
             }
         }
 
@@ -310,7 +357,7 @@ impl F2App {
         if self.preview_mode && (input.j || input.k || input.up || input.down
             || input.page_up || input.page_down || input.home || input.end)
         {
-            self.update_image_preview(ctx);
+            self.update_preview(ctx);
         }
 
         // c: copy
@@ -446,6 +493,8 @@ d              :  Delete selected (trash)
 r              :  Rename
 n              :  New directory
 p              :  Drive select
+g              :  Registered directories
+Shift+G        :  Register current directory
 v              :  Image preview
 F3             :  Text viewer
 Ctrl+R         :  Refresh
@@ -467,6 +516,28 @@ PgUp / PgDn    :  Page scroll
         if input.p {
             self.dialog.drive = Some(DriveDialog {
                 drives: self.drives.clone(),
+            });
+        }
+
+        // g: registered directories
+        if input.g {
+            self.dialog.registered_dir = Some(RegisteredDirDialog {
+                dirs: self.config.registered_dirs.clone(),
+                cursor: 0,
+            });
+        }
+
+        // Shift+G: register current directory
+        if input.shift_g {
+            let dir = self.active_panel().current_dir.clone();
+            let default_name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.to_string_lossy().to_string());
+            self.dialog.input = Some(InputDialog {
+                title: "Register Directory".to_string(),
+                value: default_name,
+                action: InputAction::RegisterDirectory(dir),
             });
         }
 
@@ -553,6 +624,62 @@ PgUp / PgDn    :  Page scroll
                             }
                         }
                     }
+                    InputAction::RegisterDirectory(path) => {
+                        // Step 2: ask for shortcut key (default: first char of name)
+                        let default_key = value
+                            .chars()
+                            .next()
+                            .unwrap_or('A')
+                            .to_uppercase()
+                            .next()
+                            .unwrap_or('A')
+                            .to_string();
+                        self.dialog.input = Some(InputDialog {
+                            title: format!("Shortcut Key for \"{}\"", value),
+                            value: default_key,
+                            action: InputAction::RegisterDirectoryKey {
+                                path,
+                                name: value,
+                            },
+                        });
+                    }
+                    InputAction::RegisterDirectoryKey { path, name } => {
+                        let key = value
+                            .chars()
+                            .next()
+                            .unwrap_or('?')
+                            .to_uppercase()
+                            .next()
+                            .unwrap_or('?')
+                            .to_string();
+                        let path_str = path.to_string_lossy().to_string();
+                        self.status_message = format!("Registered: [{}] {}", key, name);
+                        self.config.registered_dirs.push(
+                            crate::config::RegisteredDir {
+                                key,
+                                name,
+                                path: path_str,
+                            },
+                        );
+                        self.config.save();
+                    }
+                    InputAction::EditRegisteredDirKey(idx) => {
+                        let new_key = value
+                            .chars()
+                            .next()
+                            .unwrap_or('?')
+                            .to_uppercase()
+                            .next()
+                            .unwrap_or('?')
+                            .to_string();
+                        if idx < self.config.registered_dirs.len() {
+                            let name = self.config.registered_dirs[idx].name.clone();
+                            self.config.registered_dirs[idx].key = new_key.clone();
+                            self.config.save();
+                            self.status_message =
+                                format!("Changed key for \"{}\": [{}]", name, new_key);
+                        }
+                    }
                 }
             }
             DialogResult::DriveSelected(drive) => {
@@ -560,6 +687,36 @@ PgUp / PgDn    :  Page scroll
                 if path.exists() {
                     self.active_panel_mut().navigate_to(path);
                     self.save_config();
+                }
+            }
+            DialogResult::RegisteredDirSelected(path_str) => {
+                let path = PathBuf::from(&path_str);
+                if path.exists() {
+                    self.active_panel_mut().navigate_to(path);
+                    self.save_config();
+                    self.status_message = format!("Jumped to {}", path_str);
+                } else {
+                    self.status_message = format!("Directory not found: {}", path_str);
+                }
+            }
+            DialogResult::RegisteredDirDeleted(idx) => {
+                if idx < self.config.registered_dirs.len() {
+                    let removed = self.config.registered_dirs.remove(idx);
+                    self.config.save();
+                    self.status_message = format!("Unregistered: {}", removed.name);
+                }
+            }
+            DialogResult::RegisteredDirEditKey(idx) => {
+                if idx < self.config.registered_dirs.len() {
+                    let current_key = self.config.registered_dirs[idx].key.clone();
+                    self.dialog.input = Some(InputDialog {
+                        title: format!(
+                            "Change Key for \"{}\"",
+                            self.config.registered_dirs[idx].name
+                        ),
+                        value: current_key,
+                        action: InputAction::EditRegisteredDirKey(idx),
+                    });
                 }
             }
             _ => {}
@@ -678,8 +835,10 @@ impl eframe::App for F2App {
             let left_panel = &mut self.left_panel;
             let right_panel = &mut self.right_panel;
             let image_preview = &self.image_preview;
+            let audio_preview = &mut self.audio_preview;
             let left_is_inactive = active == ActivePanel::Right;
             let right_is_inactive = active == ActivePanel::Left;
+            let has_preview = image_preview.is_some() || audio_preview.is_some();
 
             ui.columns(2, |columns| {
                 // Left panel
@@ -695,8 +854,12 @@ impl eframe::App for F2App {
                         },
                     ))
                     .show(&mut columns[0], |ui| {
-                        if left_is_inactive && image_preview.is_some() {
-                            image_preview.as_ref().unwrap().ui(ui);
+                        if left_is_inactive && has_preview {
+                            if let Some(ap) = audio_preview.as_mut() {
+                                ap.ui(ui);
+                            } else if let Some(ip) = image_preview.as_ref() {
+                                ip.ui(ui);
+                            }
                         } else {
                             left_panel.ui(ui, is_active, "left_panel");
                         }
@@ -715,8 +878,12 @@ impl eframe::App for F2App {
                         },
                     ))
                     .show(&mut columns[1], |ui| {
-                        if right_is_inactive && image_preview.is_some() {
-                            image_preview.as_ref().unwrap().ui(ui);
+                        if right_is_inactive && has_preview {
+                            if let Some(ap) = audio_preview.as_mut() {
+                                ap.ui(ui);
+                            } else if let Some(ip) = image_preview.as_ref() {
+                                ip.ui(ui);
+                            }
                         } else {
                             right_panel.ui(ui, is_active, "right_panel");
                         }
@@ -829,6 +996,9 @@ struct KeyState {
     p: bool,
     f: bool,
     v: bool,
+    enter: bool,
+    g: bool,
+    shift_g: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {
