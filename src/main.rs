@@ -1,6 +1,8 @@
 mod app;
 mod config;
 mod dialog;
+#[cfg(windows)]
+mod drag_drop;
 mod file_item;
 mod file_ops;
 mod panel;
@@ -17,7 +19,8 @@ fn main() -> eframe::Result<()> {
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_min_inner_size([800.0, 400.0])
-        .with_title("f2filer");
+        .with_title("f2filer")
+        .with_drag_and_drop(true);
 
     // Restore window size
     let width = config.window_width.unwrap_or(1200.0);

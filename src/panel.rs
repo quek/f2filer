@@ -36,6 +36,8 @@ pub struct FilePanel {
     filtered_indices: Vec<usize>,
     pub focus_filter: bool,
     pub filter_has_focus: bool,
+    pub drag_request: Option<Vec<PathBuf>>,
+    pub drop_highlight: bool,
 }
 
 impl FilePanel {
@@ -52,6 +54,8 @@ impl FilePanel {
             filtered_indices: Vec::new(),
             focus_filter: false,
             filter_has_focus: false,
+            drag_request: None,
+            drop_highlight: false,
         };
         panel.refresh();
         panel
@@ -473,8 +477,31 @@ impl FilePanel {
                         text_color,
                     );
 
-                    // Advance layout
-                    ui.allocate_rect(row_rect, egui::Sense::hover());
+                    // Advance layout (Sense::drag for outbound drag-and-drop)
+                    let response = ui.allocate_rect(row_rect, egui::Sense::drag());
+
+                    // Detect drag start → collect paths for OLE drag
+                    if response.drag_started() {
+                        let mut paths = Vec::new();
+                        if !self.selected.is_empty() {
+                            // Drag all selected files
+                            for &idx in &self.selected {
+                                if let Some(item) = self.entries.get(idx) {
+                                    if item.name != ".." {
+                                        paths.push(item.path.clone());
+                                    }
+                                }
+                            }
+                        } else if let Some(item) = self.visible_entry(vis_idx) {
+                            // Drag file under cursor
+                            if item.name != ".." {
+                                paths.push(item.path.clone());
+                            }
+                        }
+                        if !paths.is_empty() {
+                            self.drag_request = Some(paths);
+                        }
+                    }
 
                     // Scroll to cursor
                     if is_cursor {
@@ -482,5 +509,21 @@ impl FilePanel {
                     }
                 }
             });
+
+        // Drop highlight overlay
+        if self.drop_highlight {
+            let rect = ui.max_rect();
+            ui.painter().rect_filled(
+                rect,
+                0.0,
+                egui::Color32::from_rgba_premultiplied(50, 120, 200, 40),
+            );
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 150, 255)),
+                egui::StrokeKind::Outside,
+            );
+        }
     }
 }

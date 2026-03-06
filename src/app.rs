@@ -246,6 +246,8 @@ impl F2App {
                 enter: i.key_pressed(egui::Key::Enter),
                 g: i.key_pressed(egui::Key::G) && !i.modifiers.shift,
                 shift_g: i.key_pressed(egui::Key::G) && i.modifiers.shift,
+                z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
+                shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
             }
         });
 
@@ -495,7 +497,9 @@ n              :  New directory
 p              :  Drive select
 g              :  Registered directories
 Shift+G        :  Register current directory
-v              :  Image preview
+Shift+Z        :  Zip compress selected
+z              :  Zip extract at cursor
+v              :  Image/Audio preview
 F3             :  Text viewer
 Ctrl+R         :  Refresh
 Ctrl+.         :  Toggle hidden files
@@ -541,10 +545,119 @@ PgUp / PgDn    :  Page scroll
             });
         }
 
+        // Shift+Z: zip compress selected files
+        if input.shift_z {
+            let targets = self.active_panel().get_operation_targets();
+            if !targets.is_empty() {
+                let sources: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
+                let default_name = targets
+                    .first()
+                    .map(|t| {
+                        // Strip extension for default zip name
+                        PathBuf::from(&t.name)
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| t.name.clone())
+                    })
+                    .unwrap_or_else(|| "archive".to_string());
+                self.dialog.input = Some(InputDialog {
+                    title: "Zip Compress".to_string(),
+                    value: default_name,
+                    action: InputAction::ZipCompress(sources),
+                });
+            }
+        }
+
+        // Z: decompress zip at cursor
+        if input.z {
+            if let Some(entry) = self.active_panel().current_entry() {
+                if !entry.is_dir {
+                    let is_zip = entry.path.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase() == "zip")
+                        .unwrap_or(false);
+                    if is_zip {
+                        let dest = self.inactive_panel().current_dir.clone();
+                        match file_ops::decompress_zip(&entry.path, &dest) {
+                            Ok(extract_dir) => {
+                                self.status_message = format!("Extracted to: {}", extract_dir.display());
+                                self.inactive_panel_mut().refresh();
+                            }
+                            Err(e) => {
+                                self.status_message = format!("Error: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // :: command mode
         if input.colon {
             self.command_mode = true;
             self.command_line.clear();
+        }
+    }
+
+    fn handle_file_drop(&mut self, ctx: &egui::Context) {
+        // Determine which panel the pointer is over (left half vs right half)
+        let screen_rect = ctx.screen_rect();
+        let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
+        let is_left_half = pointer_pos
+            .map(|p| p.x < screen_rect.center().x)
+            .unwrap_or(true);
+
+        // Hover highlight
+        let hovered_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        self.left_panel.drop_highlight = hovered_files && is_left_half;
+        self.right_panel.drop_highlight = hovered_files && !is_left_half;
+
+        // Process dropped files
+        let dropped_files: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+
+        if dropped_files.is_empty() {
+            return;
+        }
+
+        let dest_panel = if is_left_half {
+            &mut self.left_panel
+        } else {
+            &mut self.right_panel
+        };
+        let dest = dest_panel.current_dir.clone();
+
+        let conflicts = file_ops::check_conflicts(&dropped_files, &dest);
+        if conflicts.is_empty() {
+            let mut errors = Vec::new();
+            for src in &dropped_files {
+                if let Err(e) = file_ops::copy_file_or_dir(src, &dest) {
+                    errors.push(format!("{}", e));
+                }
+            }
+            if errors.is_empty() {
+                self.status_message = format!("Dropped {} item(s)", dropped_files.len());
+            } else {
+                self.status_message = format!("Errors: {}", errors.join(", "));
+            }
+            dest_panel.refresh();
+        } else {
+            self.dialog.confirm = Some(ConfirmDialog {
+                title: "Overwrite?".to_string(),
+                message: format!(
+                    "The following files already exist:\n{}\n\nOverwrite?",
+                    conflicts.join(", ")
+                ),
+                action: ConfirmAction::CopyOverwrite {
+                    sources: dropped_files,
+                    dest,
+                },
+            });
         }
     }
 
@@ -678,6 +791,24 @@ PgUp / PgDn    :  Page scroll
                             self.config.save();
                             self.status_message =
                                 format!("Changed key for \"{}\": [{}]", name, new_key);
+                        }
+                    }
+                    InputAction::ZipCompress(sources) => {
+                        let dest = self.inactive_panel().current_dir.clone();
+                        match file_ops::compress_to_zip(&sources, &dest, &value) {
+                            Ok(zip_path) => {
+                                let name = zip_path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                self.status_message =
+                                    format!("Compressed {} file(s) to {}", sources.len(), name);
+                                self.active_panel_mut().refresh();
+                                self.inactive_panel_mut().refresh();
+                            }
+                            Err(e) => {
+                                self.status_message = format!("Zip error: {}", e);
+                            }
                         }
                     }
                 }
@@ -829,6 +960,9 @@ impl eframe::App for F2App {
             });
         });
 
+        // Handle external file drops
+        self.handle_file_drop(ctx);
+
         // Central panel: two file panels side by side
         egui::CentralPanel::default().show(ctx, |ui| {
             let active = self.active;
@@ -860,6 +994,10 @@ impl eframe::App for F2App {
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
                             }
+                            // Drop highlight on preview panel
+                            if left_panel.drop_highlight {
+                                paint_drop_highlight(ui);
+                            }
                         } else {
                             left_panel.ui(ui, is_active, "left_panel");
                         }
@@ -884,11 +1022,31 @@ impl eframe::App for F2App {
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
                             }
+                            // Drop highlight on preview panel
+                            if right_panel.drop_highlight {
+                                paint_drop_highlight(ui);
+                            }
                         } else {
                             right_panel.ui(ui, is_active, "right_panel");
                         }
                     });
             });
+
+            // Handle outbound drag (App → External)
+            #[cfg(windows)]
+            {
+                let drag_paths = left_panel
+                    .drag_request
+                    .take()
+                    .or_else(|| right_panel.drag_request.take());
+                if let Some(paths) = drag_paths {
+                    let was_move = crate::drag_drop::start_drag(&paths);
+                    if was_move {
+                        left_panel.refresh();
+                        right_panel.refresh();
+                    }
+                }
+            }
         });
     }
 
@@ -936,6 +1094,21 @@ fn default_dir() -> PathBuf {
             PathBuf::from("/")
         }
     })
+}
+
+fn paint_drop_highlight(ui: &mut egui::Ui) {
+    let rect = ui.max_rect();
+    ui.painter().rect_filled(
+        rect,
+        0.0,
+        egui::Color32::from_rgba_premultiplied(50, 120, 200, 40),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 150, 255)),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// Extract drive letter (e.g. "C:") from a path like "C:\Users\foo".
@@ -999,6 +1172,8 @@ struct KeyState {
     enter: bool,
     g: bool,
     shift_g: bool,
+    z: bool,
+    shift_z: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {
