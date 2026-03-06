@@ -70,6 +70,52 @@ impl Config {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_default_values() {
+        let config = Config::default();
+        assert!(!config.show_hidden);
+        assert!(config.last_left_dir.is_none());
+        assert!(config.last_right_dir.is_none());
+        assert!(config.drive_dirs.is_empty());
+        assert!(config.registered_dirs.is_empty());
+    }
+
+    #[test]
+    fn config_serialize_deserialize() {
+        let mut config = Config::default();
+        config.show_hidden = true;
+        config.last_left_dir = Some("C:\\Users".to_string());
+        config.registered_dirs.push(RegisteredDir {
+            key: "D".to_string(),
+            name: "Downloads".to_string(),
+            path: "C:\\Users\\Downloads".to_string(),
+        });
+
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: Config = serde_json::from_str(&json).unwrap();
+
+        assert!(restored.show_hidden);
+        assert_eq!(restored.last_left_dir, Some("C:\\Users".to_string()));
+        assert_eq!(restored.registered_dirs.len(), 1);
+        assert_eq!(restored.registered_dirs[0].key, "D");
+        assert_eq!(restored.registered_dirs[0].name, "Downloads");
+    }
+
+    #[test]
+    fn config_deserialize_with_missing_fields() {
+        // Simulates loading old config that lacks new fields
+        let json = r#"{"show_hidden":false,"last_left_dir":null,"last_right_dir":null}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.drive_dirs.is_empty());
+        assert!(config.registered_dirs.is_empty());
+        assert!(config.window_x.is_none());
+    }
+}
+
 fn dirs_config_dir() -> std::path::PathBuf {
     #[cfg(windows)]
     {

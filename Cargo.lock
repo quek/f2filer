@@ -1315,6 +1315,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "tempfile",
  "trash",
  "windows 0.58.0",
  "windows-core 0.58.0",

@@ -6,7 +6,6 @@ pub struct FileViewer {
     pub path: PathBuf,
     pub content: String,
     pub open: bool,
-    pub scroll_offset: f32,
 }
 
 impl FileViewer {
@@ -16,7 +15,6 @@ impl FileViewer {
             path: path.to_path_buf(),
             content,
             open: true,
-            scroll_offset: 0.0,
         })
     }
 

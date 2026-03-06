@@ -298,3 +298,211 @@ pub fn decompress_zip(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, FileO
 
     Ok(extract_dir)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_file = tmp.path().join("src.txt");
+        fs::write(&src_file, "hello").unwrap();
+
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+
+        copy_file_or_dir(&src_file, &dest_dir).unwrap();
+        let copied = dest_dir.join("src.txt");
+        assert!(copied.exists());
+        assert_eq!(fs::read_to_string(copied).unwrap(), "hello");
+    }
+
+    #[test]
+    fn copy_file_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "src").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("file.txt"), "existing").unwrap();
+
+        let result = copy_file_or_dir(&src, &dest);
+        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
+    }
+
+    #[test]
+    fn copy_file_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "new content").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("file.txt"), "old content").unwrap();
+
+        copy_file_or_dir_overwrite(&src, &dest).unwrap();
+        assert_eq!(fs::read_to_string(dest.join("file.txt")).unwrap(), "new content");
+    }
+
+    #[test]
+    fn copy_directory_recursive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("mydir");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("a.txt"), "aaa").unwrap();
+        let sub = src.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("b.txt"), "bbb").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        copy_file_or_dir(&src, &dest).unwrap();
+        assert!(dest.join("mydir").join("a.txt").exists());
+        assert!(dest.join("mydir").join("sub").join("b.txt").exists());
+    }
+
+    #[test]
+    fn move_file_same_fs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "data").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        move_file_or_dir(&src, &dest).unwrap();
+        assert!(!src.exists());
+        assert!(dest.join("file.txt").exists());
+    }
+
+    #[test]
+    fn move_file_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "src").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("file.txt"), "existing").unwrap();
+
+        let result = move_file_or_dir(&src, &dest);
+        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
+        assert!(src.exists()); // source not deleted
+    }
+
+    #[test]
+    fn rename_file_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("old.txt");
+        fs::write(&src, "data").unwrap();
+
+        let new_path = rename_file(&src, "new.txt").unwrap();
+        assert!(!src.exists());
+        assert!(new_path.exists());
+        assert_eq!(new_path.file_name().unwrap().to_str().unwrap(), "new.txt");
+    }
+
+    #[test]
+    fn rename_file_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("a.txt");
+        fs::write(&src, "a").unwrap();
+        fs::write(tmp.path().join("b.txt"), "b").unwrap();
+
+        let result = rename_file(&src, "b.txt");
+        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
+    }
+
+    #[test]
+    fn create_directory_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = create_directory(tmp.path(), "newdir").unwrap();
+        assert!(path.exists());
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn create_directory_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("existing")).unwrap();
+
+        let result = create_directory(tmp.path(), "existing");
+        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
+    }
+
+    #[test]
+    fn check_conflicts_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "data").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let conflicts = check_conflicts(&[src], &dest);
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn check_conflicts_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "data").unwrap();
+
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("file.txt"), "existing").unwrap();
+
+        let conflicts = check_conflicts(&[src], &dest);
+        assert_eq!(conflicts, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn compress_and_decompress_zip() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create source files
+        let src = tmp.path().join("file.txt");
+        fs::write(&src, "hello zip").unwrap();
+
+        let zip_dest = tmp.path().join("zips");
+        fs::create_dir(&zip_dest).unwrap();
+
+        // Compress
+        let zip_path = compress_to_zip(&[src], &zip_dest, "test").unwrap();
+        assert!(zip_path.exists());
+        assert_eq!(zip_path.file_name().unwrap().to_str().unwrap(), "test.zip");
+
+        // Decompress
+        let extract_dest = tmp.path().join("extracted");
+        fs::create_dir(&extract_dest).unwrap();
+        let extract_dir = decompress_zip(&zip_path, &extract_dest).unwrap();
+        assert!(extract_dir.join("file.txt").exists());
+        assert_eq!(fs::read_to_string(extract_dir.join("file.txt")).unwrap(), "hello zip");
+    }
+
+    #[test]
+    fn compress_zip_auto_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("a.txt");
+        fs::write(&src, "a").unwrap();
+
+        // With .zip extension already
+        let zip_path = compress_to_zip(&[src], tmp.path(), "archive.zip").unwrap();
+        assert_eq!(zip_path.file_name().unwrap().to_str().unwrap(), "archive.zip");
+    }
+
+    #[test]
+    fn file_op_error_display() {
+        let e = FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "not found"));
+        assert!(e.to_string().contains("not found"));
+
+        let e = FileOpError::TrashError("trash fail".to_string());
+        assert!(e.to_string().contains("trash fail"));
+
+        let e = FileOpError::AlreadyExists(PathBuf::from("/tmp/file.txt"));
+        assert!(e.to_string().contains("Already exists"));
+    }
+}

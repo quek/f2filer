@@ -10,7 +10,6 @@ pub struct FileItem {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub extension: String,
-    pub is_symlink: bool,
 }
 
 impl FileItem {
@@ -18,7 +17,6 @@ impl FileItem {
         let metadata = path.symlink_metadata().ok()?;
         let name = path.file_name()?.to_string_lossy().to_string();
         let is_dir = metadata.is_dir();
-        let is_symlink = metadata.is_symlink();
         let size = if is_dir { 0 } else { metadata.len() };
         let modified = metadata.modified().ok();
         let extension = if is_dir {
@@ -39,7 +37,6 @@ impl FileItem {
             is_dir,
             is_hidden,
             extension,
-            is_symlink,
         })
     }
 
@@ -52,7 +49,6 @@ impl FileItem {
             is_dir: true,
             is_hidden: false,
             extension: String::new(),
-            is_symlink: false,
         }
     }
 
@@ -83,7 +79,7 @@ impl FileItem {
     }
 }
 
-fn format_size(bytes: u64) -> String {
+pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
     const GB: u64 = 1024 * MB;
@@ -116,6 +112,69 @@ fn is_hidden_file(_path: &Path, name: &str) -> bool {
 #[cfg(not(windows))]
 fn is_hidden_file(_path: &Path, name: &str) -> bool {
     name.starts_with('.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_size_bytes() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1), "1 B");
+        assert_eq!(format_size(999), "999 B");
+        assert_eq!(format_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_size_kilobytes() {
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1023), "1023.0 KB");
+    }
+
+    #[test]
+    fn format_size_megabytes() {
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 500), "500.0 MB");
+    }
+
+    #[test]
+    fn format_size_gigabytes() {
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_size(1024 * 1024 * 1024 * 2), "2.0 GB");
+    }
+
+    #[test]
+    fn file_item_formatted_ext_dir() {
+        let item = FileItem::parent_entry(PathBuf::from("/tmp"));
+        assert_eq!(item.formatted_ext(), "<DIR>");
+    }
+
+    #[test]
+    fn file_item_formatted_size_dir() {
+        let item = FileItem::parent_entry(PathBuf::from("/tmp"));
+        assert_eq!(item.formatted_size(), "");
+    }
+
+    #[test]
+    fn file_item_parent_entry() {
+        let item = FileItem::parent_entry(PathBuf::from("/home"));
+        assert_eq!(item.name, "..");
+        assert!(item.is_dir);
+        assert_eq!(item.size, 0);
+        assert!(!item.is_hidden);
+    }
+
+    #[test]
+    fn read_directory_returns_parent() {
+        let dir = std::env::current_dir().unwrap();
+        let entries = read_directory(&dir);
+        // Should have at least ".." if the dir has a parent
+        if dir.parent().is_some() {
+            assert_eq!(entries.first().unwrap().name, "..");
+        }
+    }
 }
 
 pub fn read_directory(dir: &Path) -> Vec<FileItem> {

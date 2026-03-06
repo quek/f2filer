@@ -4,7 +4,9 @@
       "Bash(cargo *)",
       "Bash(git *)",
       "Bash(powershell -Command \"Stop-Process -Name f2filer *\")",
-      "Bash(wc *)"
+      "Bash(wc *)",
+      "Bash(find F:/dev/f2filer/src -name \"*.rs\" -exec wc -l {} +)",
+      "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue\")"
     ]
   }
 }

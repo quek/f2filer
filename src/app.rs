@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
 use crate::config::Config;
 use crate::dialog::*;
+use crate::file_item;
 use crate::file_ops;
 use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
@@ -42,23 +43,8 @@ impl F2App {
 
         let config = Config::load();
 
-        let left_dir = config
-            .last_left_dir
-            .as_ref()
-            .and_then(|p| {
-                let path = PathBuf::from(p);
-                if path.exists() { Some(path) } else { None }
-            })
-            .unwrap_or_else(default_dir);
-
-        let right_dir = config
-            .last_right_dir
-            .as_ref()
-            .and_then(|p| {
-                let path = PathBuf::from(p);
-                if path.exists() { Some(path) } else { None }
-            })
-            .unwrap_or_else(default_dir);
+        let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
+        let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
 
         let drives = file_ops::get_drives();
 
@@ -371,17 +357,7 @@ impl F2App {
                 let conflicts = file_ops::check_conflicts(&sources, &dest);
 
                 if conflicts.is_empty() {
-                    let mut errors = Vec::new();
-                    for src in &sources {
-                        if let Err(e) = file_ops::copy_file_or_dir(src, &dest) {
-                            errors.push(format!("{}", e));
-                        }
-                    }
-                    if errors.is_empty() {
-                        self.status_message = format!("Copied {} item(s)", sources.len());
-                    } else {
-                        self.status_message = format!("Errors: {}", errors.join(", "));
-                    }
+                    self.status_message = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir(s, &dest));
                     self.active_panel_mut().deselect_all();
                     self.inactive_panel_mut().refresh();
                 } else {
@@ -406,17 +382,7 @@ impl F2App {
                 let conflicts = file_ops::check_conflicts(&sources, &dest);
 
                 if conflicts.is_empty() {
-                    let mut errors = Vec::new();
-                    for src in &sources {
-                        if let Err(e) = file_ops::move_file_or_dir(src, &dest) {
-                            errors.push(format!("{}", e));
-                        }
-                    }
-                    if errors.is_empty() {
-                        self.status_message = format!("Moved {} item(s)", sources.len());
-                    } else {
-                        self.status_message = format!("Errors: {}", errors.join(", "));
-                    }
+                    self.status_message = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir(s, &dest));
                     self.active_panel_mut().refresh();
                     self.inactive_panel_mut().refresh();
                 } else {
@@ -634,17 +600,7 @@ PgUp / PgDn    :  Page scroll
 
         let conflicts = file_ops::check_conflicts(&dropped_files, &dest);
         if conflicts.is_empty() {
-            let mut errors = Vec::new();
-            for src in &dropped_files {
-                if let Err(e) = file_ops::copy_file_or_dir(src, &dest) {
-                    errors.push(format!("{}", e));
-                }
-            }
-            if errors.is_empty() {
-                self.status_message = format!("Dropped {} item(s)", dropped_files.len());
-            } else {
-                self.status_message = format!("Errors: {}", errors.join(", "));
-            }
+            self.status_message = batch_op(&dropped_files, "Dropped", |s| file_ops::copy_file_or_dir(s, &dest));
             dest_panel.refresh();
         } else {
             self.dialog.confirm = Some(ConfirmDialog {
@@ -665,46 +621,16 @@ PgUp / PgDn    :  Page scroll
         match result {
             DialogResult::ConfirmYes(action) => match action {
                 ConfirmAction::Delete(paths) => {
-                    let mut errors = Vec::new();
-                    for path in &paths {
-                        if let Err(e) = file_ops::delete_to_trash(path) {
-                            errors.push(format!("{}", e));
-                        }
-                    }
-                    if errors.is_empty() {
-                        self.status_message = format!("Deleted {} item(s)", paths.len());
-                    } else {
-                        self.status_message = format!("Errors: {}", errors.join(", "));
-                    }
+                    self.status_message = batch_op(&paths, "Deleted", file_ops::delete_to_trash);
                     self.active_panel_mut().refresh();
                 }
                 ConfirmAction::CopyOverwrite { sources, dest } => {
-                    let mut errors = Vec::new();
-                    for src in &sources {
-                        if let Err(e) = file_ops::copy_file_or_dir_overwrite(src, &dest) {
-                            errors.push(format!("{}", e));
-                        }
-                    }
-                    if errors.is_empty() {
-                        self.status_message = format!("Copied {} item(s)", sources.len());
-                    } else {
-                        self.status_message = format!("Errors: {}", errors.join(", "));
-                    }
+                    self.status_message = batch_op(&sources, "Copied", |s| file_ops::copy_file_or_dir_overwrite(s, &dest));
                     self.active_panel_mut().deselect_all();
                     self.inactive_panel_mut().refresh();
                 }
                 ConfirmAction::MoveOverwrite { sources, dest } => {
-                    let mut errors = Vec::new();
-                    for src in &sources {
-                        if let Err(e) = file_ops::move_file_or_dir_overwrite(src, &dest) {
-                            errors.push(format!("{}", e));
-                        }
-                    }
-                    if errors.is_empty() {
-                        self.status_message = format!("Moved {} item(s)", sources.len());
-                    } else {
-                        self.status_message = format!("Errors: {}", errors.join(", "));
-                    }
+                    self.status_message = batch_op(&sources, "Moved", |s| file_ops::move_file_or_dir_overwrite(s, &dest));
                     self.active_panel_mut().refresh();
                     self.inactive_panel_mut().refresh();
                 }
@@ -739,14 +665,7 @@ PgUp / PgDn    :  Page scroll
                     }
                     InputAction::RegisterDirectory(path) => {
                         // Step 2: ask for shortcut key (default: first char of name)
-                        let default_key = value
-                            .chars()
-                            .next()
-                            .unwrap_or('A')
-                            .to_uppercase()
-                            .next()
-                            .unwrap_or('A')
-                            .to_string();
+                        let default_key = first_char_upper(&value, 'A');
                         self.dialog.input = Some(InputDialog {
                             title: format!("Shortcut Key for \"{}\"", value),
                             value: default_key,
@@ -757,14 +676,7 @@ PgUp / PgDn    :  Page scroll
                         });
                     }
                     InputAction::RegisterDirectoryKey { path, name } => {
-                        let key = value
-                            .chars()
-                            .next()
-                            .unwrap_or('?')
-                            .to_uppercase()
-                            .next()
-                            .unwrap_or('?')
-                            .to_string();
+                        let key = first_char_upper(&value, '?');
                         let path_str = path.to_string_lossy().to_string();
                         self.status_message = format!("Registered: [{}] {}", key, name);
                         self.config.registered_dirs.push(
@@ -777,14 +689,7 @@ PgUp / PgDn    :  Page scroll
                         self.config.save();
                     }
                     InputAction::EditRegisteredDirKey(idx) => {
-                        let new_key = value
-                            .chars()
-                            .next()
-                            .unwrap_or('?')
-                            .to_uppercase()
-                            .next()
-                            .unwrap_or('?')
-                            .to_string();
+                        let new_key = first_char_upper(&value, '?');
                         if idx < self.config.registered_dirs.len() {
                             let name = self.config.registered_dirs[idx].name.clone();
                             self.config.registered_dirs[idx].key = new_key.clone();
@@ -946,7 +851,7 @@ impl eframe::App for F2App {
                     "{} items | {} selected | {}",
                     total_files,
                     selected_count,
-                    format_size_short(selected_size),
+                    file_item::format_size(selected_size),
                 ));
 
                 if !self.status_message.is_empty() {
@@ -1121,21 +1026,120 @@ fn drive_letter(path: &std::path::Path) -> Option<String> {
     }
 }
 
-fn format_size_short(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
+fn restore_dir(saved: &Option<String>) -> Option<PathBuf> {
+    saved.as_ref().and_then(|p| {
+        let path = PathBuf::from(p);
+        if path.exists() { Some(path) } else { None }
+    })
+}
 
-    if bytes == 0 {
-        return "0 B".to_string();
-    } else if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
+fn first_char_upper(s: &str, fallback: char) -> String {
+    s.chars()
+        .next()
+        .unwrap_or(fallback)
+        .to_uppercase()
+        .next()
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn batch_op<F, E>(paths: &[PathBuf], verb: &str, op: F) -> String
+where
+    F: Fn(&Path) -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    let errors: Vec<String> = paths
+        .iter()
+        .filter_map(|p| op(p).err().map(|e| e.to_string()))
+        .collect();
+    if errors.is_empty() {
+        format!("{} {} item(s)", verb, paths.len())
     } else {
-        format!("{} B", bytes)
+        format!("Errors: {}", errors.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_char_upper_normal() {
+        assert_eq!(first_char_upper("hello", 'X'), "H");
+        assert_eq!(first_char_upper("world", 'X'), "W");
+    }
+
+    #[test]
+    fn first_char_upper_already_upper() {
+        assert_eq!(first_char_upper("Hello", 'X'), "H");
+    }
+
+    #[test]
+    fn first_char_upper_empty() {
+        assert_eq!(first_char_upper("", 'X'), "X");
+    }
+
+    #[test]
+    fn first_char_upper_japanese() {
+        assert_eq!(first_char_upper("あいう", 'X'), "あ");
+    }
+
+    #[test]
+    fn batch_op_all_success() {
+        let paths = vec![PathBuf::from("a"), PathBuf::from("b")];
+        let result = batch_op(&paths, "Processed", |_| Ok::<(), String>(()));
+        assert_eq!(result, "Processed 2 item(s)");
+    }
+
+    #[test]
+    fn batch_op_with_errors() {
+        let paths = vec![PathBuf::from("a"), PathBuf::from("b")];
+        let result = batch_op(&paths, "Processed", |p| {
+            if p == Path::new("a") {
+                Err("fail".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.starts_with("Errors:"));
+        assert!(result.contains("fail"));
+    }
+
+    #[test]
+    fn batch_op_empty() {
+        let paths: Vec<PathBuf> = vec![];
+        let result = batch_op(&paths, "Done", |_| Ok::<(), String>(()));
+        assert_eq!(result, "Done 0 item(s)");
+    }
+
+    #[test]
+    fn drive_letter_windows_path() {
+        assert_eq!(drive_letter(Path::new("C:\\Users\\foo")), Some("C:".to_string()));
+        assert_eq!(drive_letter(Path::new("D:\\data")), Some("D:".to_string()));
+    }
+
+    #[test]
+    fn drive_letter_no_drive() {
+        assert_eq!(drive_letter(Path::new("/home/user")), None);
+        assert_eq!(drive_letter(Path::new("")), None);
+    }
+
+    #[test]
+    fn restore_dir_none() {
+        assert!(restore_dir(&None).is_none());
+    }
+
+    #[test]
+    fn restore_dir_nonexistent() {
+        let saved = Some("/nonexistent/path/12345".to_string());
+        assert!(restore_dir(&saved).is_none());
+    }
+
+    #[test]
+    fn restore_dir_exists() {
+        let dir = std::env::current_dir().unwrap();
+        let saved = Some(dir.to_string_lossy().to_string());
+        assert_eq!(restore_dir(&saved), Some(dir));
     }
 }
 

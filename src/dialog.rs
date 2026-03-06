@@ -222,23 +222,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             });
 
         // Drive letter key shortcuts (e.g. press 'c' for "C:")
-        let letter_keys = [
-            (egui::Key::A, 'A'), (egui::Key::B, 'B'), (egui::Key::C, 'C'),
-            (egui::Key::D, 'D'), (egui::Key::E, 'E'), (egui::Key::F, 'F'),
-            (egui::Key::G, 'G'), (egui::Key::H, 'H'), (egui::Key::I, 'I'),
-            (egui::Key::J, 'J'), (egui::Key::K, 'K'), (egui::Key::L, 'L'),
-            (egui::Key::M, 'M'), (egui::Key::N, 'N'), (egui::Key::O, 'O'),
-            (egui::Key::P, 'P'), (egui::Key::Q, 'Q'), (egui::Key::R, 'R'),
-            (egui::Key::S, 'S'), (egui::Key::T, 'T'), (egui::Key::U, 'U'),
-            (egui::Key::V, 'V'), (egui::Key::W, 'W'), (egui::Key::X, 'X'),
-            (egui::Key::Y, 'Y'), (egui::Key::Z, 'Z'),
-        ];
-        for (key, letter) in &letter_keys {
-            if ctx.input(|inp| inp.key_pressed(*key)) {
-                let drive_name = format!("{}:", letter);
-                if drives.iter().any(|d| d == &drive_name) {
-                    result = DialogResult::DriveSelected(drive_name);
-                }
+        if let Some(letter) = pressed_letter_key(ctx) {
+            let drive_name = format!("{}:", letter);
+            if drives.iter().any(|d| d == &drive_name) {
+                result = DialogResult::DriveSelected(drive_name);
             }
         }
 
@@ -302,23 +289,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
 
         // Shortcut key matching (A-Z letters)
-        let letter_keys = [
-            (egui::Key::A, "A"), (egui::Key::B, "B"), (egui::Key::C, "C"),
-            (egui::Key::D, "D"), (egui::Key::E, "E"), (egui::Key::F, "F"),
-            (egui::Key::G, "G"), (egui::Key::H, "H"), (egui::Key::I, "I"),
-            (egui::Key::J, "J"), (egui::Key::K, "K"), (egui::Key::L, "L"),
-            (egui::Key::M, "M"), (egui::Key::N, "N"), (egui::Key::O, "O"),
-            (egui::Key::P, "P"), (egui::Key::Q, "Q"), (egui::Key::R, "R"),
-            (egui::Key::S, "S"), (egui::Key::T, "T"), (egui::Key::U, "U"),
-            (egui::Key::V, "V"), (egui::Key::W, "W"), (egui::Key::X, "X"),
-            (egui::Key::Y, "Y"), (egui::Key::Z, "Z"),
-        ];
-        for (key, letter) in &letter_keys {
-            if ctx.input(|inp| inp.key_pressed(*key)) {
-                // Find first directory matching this shortcut key
-                if let Some(dir) = dialog.dirs.iter().find(|d| d.key == *letter) {
-                    result = DialogResult::RegisteredDirSelected(dir.path.clone());
-                }
+        if let Some(letter) = pressed_letter_key(ctx) {
+            let letter_str = letter.to_string();
+            if let Some(dir) = dialog.dirs.iter().find(|d| d.key == letter_str) {
+                result = DialogResult::RegisteredDirSelected(dir.path.clone());
             }
         }
 
@@ -359,4 +333,24 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     }
 
     result
+}
+
+fn pressed_letter_key(ctx: &egui::Context) -> Option<char> {
+    let keys = [
+        (egui::Key::A, 'A'), (egui::Key::B, 'B'), (egui::Key::C, 'C'),
+        (egui::Key::D, 'D'), (egui::Key::E, 'E'), (egui::Key::F, 'F'),
+        (egui::Key::G, 'G'), (egui::Key::H, 'H'), (egui::Key::I, 'I'),
+        (egui::Key::J, 'J'), (egui::Key::K, 'K'), (egui::Key::L, 'L'),
+        (egui::Key::M, 'M'), (egui::Key::N, 'N'), (egui::Key::O, 'O'),
+        (egui::Key::P, 'P'), (egui::Key::Q, 'Q'), (egui::Key::R, 'R'),
+        (egui::Key::S, 'S'), (egui::Key::T, 'T'), (egui::Key::U, 'U'),
+        (egui::Key::V, 'V'), (egui::Key::W, 'W'), (egui::Key::X, 'X'),
+        (egui::Key::Y, 'Y'), (egui::Key::Z, 'Z'),
+    ];
+    for (key, letter) in &keys {
+        if ctx.input(|inp| inp.key_pressed(*key)) {
+            return Some(*letter);
+        }
+    }
+    None
 }

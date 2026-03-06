@@ -527,3 +527,46 @@ impl FilePanel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_middle_short_string() {
+        assert_eq!(truncate_middle("hello", 10), "hello");
+        assert_eq!(truncate_middle("hi", 2), "hi");
+    }
+
+    #[test]
+    fn truncate_middle_exact_fit() {
+        assert_eq!(truncate_middle("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_middle_needs_truncation() {
+        let result = truncate_middle("abcdefghij", 7);
+        // keep=6, front=(6+1)/2=3, back=3 → "abc…hij"
+        assert_eq!(result, "abc…hij");
+    }
+
+    #[test]
+    fn truncate_middle_very_small_max() {
+        assert_eq!(truncate_middle("hello", 1), "h");
+        assert_eq!(truncate_middle("hello", 2), "he");
+        assert_eq!(truncate_middle("hello", 3), "hel");
+    }
+
+    #[test]
+    fn truncate_middle_japanese() {
+        let s = "あいうえおかきくけこ"; // 10 chars
+        let result = truncate_middle(s, 7);
+        // keep=6, front=(6+1)/2=3, back=3 → "あいう…くけこ"
+        assert_eq!(result, "あいう…くけこ");
+    }
+
+    #[test]
+    fn truncate_middle_empty() {
+        assert_eq!(truncate_middle("", 5), "");
+    }
+}
