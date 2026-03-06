@@ -282,7 +282,11 @@ impl FilePanel {
 
         ui.separator();
 
-        // Column headers
+        // Column headers — widths shared between headers and rows for alignment
+        let mut name_w = 0.0f32;
+        let mut ext_w = 0.0f32;
+        let mut size_w = 0.0f32;
+
         let mut sort_clicked: Option<SortKey> = None;
         let cur_sort_key = self.sort_key;
         let cur_sort_order = self.sort_order;
@@ -302,9 +306,9 @@ impl FilePanel {
             };
 
             let w = ui.available_width();
-            let name_w = w * 0.40;
-            let ext_w = w * 0.10;
-            let size_w = w * 0.18;
+            name_w = w * 0.40;
+            ext_w = w * 0.10;
+            size_w = w * 0.18;
 
             if ui
                 .add_sized(
@@ -410,91 +414,67 @@ impl FilePanel {
 
                     ui.painter().rect_filled(row_rect, 0.0, bg_color);
 
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
+                    // Build display text
+                    let name_display = if entry.is_dir && entry.name != ".." {
+                        format!("[{}]", entry.name)
+                    } else {
+                        entry.name.clone()
+                    };
+                    let mark = if is_sel { "*" } else { " " };
+                    let full_name = format!("{}{}", mark, name_display);
 
-                        let w = ui.available_width();
-                        let name_w = w * 0.40;
-                        let ext_w = w * 0.10;
-                        let size_w = w * 0.18;
+                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                    let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
+                    let col_pad = char_width; // 1 character width padding between columns
+                    let max_chars = (((name_w - col_pad) / char_width) as usize).max(4);
+                    let name_text = truncate_middle(&full_name, max_chars);
 
-                        let name_display = if entry.is_dir && entry.name != ".." {
-                            format!("[{}]", entry.name)
-                        } else {
-                            entry.name.clone()
-                        };
+                    let x0 = row_rect.min.x;
+                    let y_center = row_rect.center().y;
 
-                        // Mark selected items
-                        let mark = if is_sel { "*" } else { " " };
-                        let full_name = format!("{}{}", mark, name_display);
+                    // Column positions with padding
+                    let ext_x = x0 + name_w + col_pad;
+                    let size_right_x = x0 + name_w + ext_w + size_w - col_pad;
+                    let date_x = x0 + name_w + ext_w + size_w + col_pad;
 
-                        // Measure monospace char width and truncate in the middle
-                        let char_width = ui.fonts(|f| {
-                            f.glyph_width(&egui::TextStyle::Monospace.resolve(ui.style()), 'W')
-                        });
-                        let max_chars = ((name_w / char_width) as usize).max(4);
-                        let name_text = truncate_middle(&full_name, max_chars);
+                    // Name column (left-aligned)
+                    ui.painter().text(
+                        egui::pos2(x0, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        &name_text,
+                        font_id.clone(),
+                        text_color,
+                    );
 
-                        let left_layout = egui::Layout::left_to_right(egui::Align::Center);
+                    // Ext column (left-aligned, shows <DIR> for directories)
+                    ui.painter().text(
+                        egui::pos2(ext_x, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        entry.formatted_ext(),
+                        font_id.clone(),
+                        text_color,
+                    );
 
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(name_w, row_height),
-                            left_layout,
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(name_text).color(text_color).monospace(),
-                                    )
-                                    .truncate(),
-                                );
-                            },
-                        );
+                    // Size column (right-aligned)
+                    ui.painter().text(
+                        egui::pos2(size_right_x, y_center),
+                        egui::Align2::RIGHT_CENTER,
+                        entry.formatted_size(),
+                        font_id.clone(),
+                        text_color,
+                    );
 
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ext_w, row_height),
-                            left_layout,
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&entry.extension)
-                                            .color(text_color)
-                                            .monospace(),
-                                    )
-                                    .truncate(),
-                                );
-                            },
-                        );
+                    // Date column (left-aligned)
+                    ui.painter().text(
+                        egui::pos2(date_x, y_center),
+                        egui::Align2::LEFT_CENTER,
+                        entry.formatted_date(),
+                        font_id.clone(),
+                        text_color,
+                    );
 
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(size_w, row_height),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(entry.formatted_size())
-                                            .color(text_color)
-                                            .monospace(),
-                                    )
-                                    .truncate(),
-                                );
-                            },
-                        );
-
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), row_height),
-                            left_layout,
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(entry.formatted_date())
-                                            .color(text_color)
-                                            .monospace(),
-                                    )
-                                    .truncate(),
-                                );
-                            },
-                        );
-                    });
+                    // Advance layout
+                    ui.allocate_rect(row_rect, egui::Sense::hover());
 
                     // Scroll to cursor
                     if is_cursor {

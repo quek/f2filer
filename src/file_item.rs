@@ -56,9 +56,17 @@ impl FileItem {
         }
     }
 
+    pub fn formatted_ext(&self) -> &str {
+        if self.is_dir {
+            "<DIR>"
+        } else {
+            &self.extension
+        }
+    }
+
     pub fn formatted_size(&self) -> String {
         if self.is_dir {
-            "<DIR>".to_string()
+            String::new()
         } else {
             format_size(self.size)
         }
