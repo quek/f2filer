@@ -1,7 +1,7 @@
 # f2filer - Dual-Pane File Manager
 
 ## Project Overview
-Rust + egui (eframe 0.31) で作成された2画面ファイラー。NyanFi風のキーバインドを持つ。
+Rust + egui (eframe 0.31) で作成された2画面ファイラー。
 
 ## Tech Stack
 - Language: Rust (edition 2021)

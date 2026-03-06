@@ -1,6 +1,6 @@
 # f2filer
 
-NyanFi 風キーバインドを持つ、Rust + egui 製の2画面ファイラー。
+Rust + egui 製の2画面ファイラー。
 
 ## スクリーンショット
 
