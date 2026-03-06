@@ -1,53 +1,6 @@
 # f2filer - Dual-Pane File Manager
 
-## Project Overview
-Rust + egui (eframe 0.31) で作成された2画面ファイラー。
-
-## Tech Stack
-- Language: Rust (edition 2021)
-- GUI: eframe 0.31 / egui
-- Font: HackGenConsoleNF-Regular.ttf（ユーザーローカルフォント）
-- Dependencies: chrono, open, trash, serde, serde_json, image, hound, rodio
-
-## Architecture
-```
-src/
-├── main.rs          # エントリポイント (eframe起動、ウィンドウ位置/サイズ復元)
-├── app.rs           # メインアプリ構造体、キーボードハンドリング、ダイアログ結果処理、フォント設定
-├── panel.rs         # FilePanel: ファイル一覧表示、カーソル、選択、フィルター、中央省略表示
-├── file_item.rs     # FileItem構造体、ディレクトリ読み込み、隠しファイル判定
-├── file_ops.rs      # ファイル操作 (コピー/移動/削除/リネーム)、ドライブ列挙
-├── dialog.rs        # ダイアログ (確認/入力/メッセージ/ドライブ選択)
-├── sort.rs          # ソートロジック (名前/拡張子/サイズ/日付)
-├── config.rs        # 設定の永続化 (APPDATA/f2filer/config.json)
-├── image_viewer.rs  # 画像プレビュー (静止画+GIFアニメ、非同期読込、LRUキャッシュ)
-├── audio_viewer.rs  # WAV波形表示+再生 (ストリーミング再生、無音スキップ、バックグラウンド波形読込)
-└── viewer.rs        # テキストファイルビューア
-```
-
-## Keybindings
-- `j`/`k`/`↑`/`↓`: カーソル移動
-- `l` / `Enter`: ディレクトリを開く / ファイル実行
-- `h`: 親ディレクトリ
-- `i`: パネル切替
-- `Space`: 選択トグル
-- `Ctrl+A`: 全選択
-- `f`: フィルターにフォーカス（Enter: 確定して最初のマッチに移動、Escape: キャンセル）
-- `o`: 反対側パネルを同期
-- `c`: コピー (選択ファイルのみ)
-- `m`: 移動 (選択ファイルのみ)
-- `d`: 削除 (選択ファイルのみ、トラッシュ)
-- `r`: リネーム
-- `n`: 新規ディレクトリ
-- `p`: ドライブ選択（ドライブレターキーで直接選択）
-- `v`: プレビュー切替（画像/WAV波形+再生、反対パネルに表示、カーソル追従）
-- `g`: 登録ディレクトリ一覧
-- `Shift+G`: 現在のディレクトリを登録
-- `F3`: テキストビューア
-- `Ctrl+R`: リフレッシュ
-- `Ctrl+.`: 隠しファイル表示切替
-- `Ctrl+Q`: 終了
-- `?`: ショートカット一覧
+プロジェクト概要、技術スタック、アーキテクチャ、キーバインド、設定については [README.md](README.md) を参照。
 
 ## Development Workflow
 ```bash
@@ -63,15 +16,6 @@ cargo build
 ```
 
 Note: bash上で `taskkill /F /IM f2filer.exe` はワーキングディレクトリが `F:/` の場合パース失敗するため、PowerShellの `Stop-Process` を使用する。
-
-## Config (APPDATA/f2filer/config.json)
-- `show_hidden`: 隠しファイル表示
-- `last_left_dir` / `last_right_dir`: 左右パネルの最後のディレクトリ
-- `drive_dirs`: ドライブごとの最後にいたディレクトリ (HashMap)
-- `registered_dirs`: 登録ディレクトリ (Vec<RegisteredDir>: key, name, path)
-- `window_x` / `window_y` / `window_width` / `window_height`: ウィンドウ位置・サイズ
-
-設定は毎回のディレクトリナビゲーション時に保存される（`taskkill /F` は `on_exit` を呼ばないため）。
 
 ## Design Decisions
 - コピー/移動/削除はSpaceで選択したファイルのみ対象（カーソル位置のファイルは対象外）
