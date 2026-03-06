@@ -159,7 +159,15 @@ pub fn delete_permanently(path: &Path) -> Result<(), FileOpError> {
 fn shred_file(path: &Path) -> Result<(), FileOpError> {
     use std::io::{Seek, SeekFrom};
 
-    let len = fs::metadata(path)?.len();
+    // Remove read-only attribute if set
+    let metadata = fs::metadata(path)?;
+    if metadata.permissions().readonly() {
+        let mut perms = metadata.permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(path, perms)?;
+    }
+
+    let len = metadata.len();
     if len > 0 {
         let mut file = fs::OpenOptions::new().write(true).open(path)?;
         let mut buf = vec![0u8; len.min(64 * 1024) as usize];
@@ -201,6 +209,8 @@ fn shred_dir_recursive(dir: &Path) -> Result<(), FileOpError> {
 }
 
 pub fn rename_file(old_path: &Path, new_name: &str) -> Result<PathBuf, FileOpError> {
+    validate_name(new_name)?;
+
     let parent = old_path.parent().ok_or_else(|| {
         FileOpError::IoError(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -219,6 +229,8 @@ pub fn rename_file(old_path: &Path, new_name: &str) -> Result<PathBuf, FileOpErr
 }
 
 pub fn create_directory(parent: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    validate_name(name)?;
+
     let new_path = parent.join(name);
 
     if new_path.exists() {
@@ -227,6 +239,23 @@ pub fn create_directory(parent: &Path, name: &str) -> Result<PathBuf, FileOpErro
 
     fs::create_dir(&new_path)?;
     Ok(new_path)
+}
+
+/// Reject names containing path separators or traversal components
+fn validate_name(name: &str) -> Result<(), FileOpError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name == ".."
+        || name == "."
+    {
+        return Err(FileOpError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid name: {}", name),
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -258,6 +287,7 @@ pub fn compress_to_zip(
     } else {
         format!("{}.zip", zip_name)
     };
+    validate_name(&name)?;
     let zip_path = dest_dir.join(&name);
 
     let file = fs::File::create(&zip_path)?;
@@ -547,6 +577,82 @@ mod tests {
         // With .zip extension already
         let zip_path = compress_to_zip(&[src], tmp.path(), "archive.zip").unwrap();
         assert_eq!(zip_path.file_name().unwrap().to_str().unwrap(), "archive.zip");
+    }
+
+    #[test]
+    fn validate_name_rejects_traversal() {
+        assert!(validate_name("..").is_err());
+        assert!(validate_name(".").is_err());
+        assert!(validate_name("foo/bar").is_err());
+        assert!(validate_name("foo\\bar").is_err());
+        assert!(validate_name("").is_err());
+        assert!(validate_name("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn validate_name_accepts_normal() {
+        assert!(validate_name("hello.txt").is_ok());
+        assert!(validate_name("日本語.txt").is_ok());
+        assert!(validate_name(".hidden").is_ok());
+        assert!(validate_name("file with spaces").is_ok());
+    }
+
+    #[test]
+    fn rename_rejects_path_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("a.txt");
+        fs::write(&src, "data").unwrap();
+
+        assert!(rename_file(&src, "..\\escape.txt").is_err());
+        assert!(rename_file(&src, "../escape.txt").is_err());
+        assert!(rename_file(&src, "..").is_err());
+        assert!(src.exists()); // source unchanged
+    }
+
+    #[test]
+    fn create_dir_rejects_path_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(create_directory(tmp.path(), "..\\escape").is_err());
+        assert!(create_directory(tmp.path(), "../escape").is_err());
+        assert!(create_directory(tmp.path(), "..").is_err());
+    }
+
+    #[test]
+    fn shred_file_removes_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("secret.txt");
+        fs::write(&path, "sensitive data here").unwrap();
+
+        delete_permanently(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn shred_readonly_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("readonly.txt");
+        fs::write(&path, "readonly content").unwrap();
+
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&path, perms).unwrap();
+
+        delete_permanently(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn shred_directory_recursive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("mydir");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "aaa").unwrap();
+        let sub = dir.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("b.txt"), "bbb").unwrap();
+
+        delete_permanently(&dir).unwrap();
+        assert!(!dir.exists());
     }
 
     #[test]
