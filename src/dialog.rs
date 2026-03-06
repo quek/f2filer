@@ -56,6 +56,7 @@ pub enum InputAction {
         name: String,
     },
     EditRegisteredDirKey(usize),
+    ZipCompress(Vec<std::path::PathBuf>),
 }
 
 pub struct MessageDialog {

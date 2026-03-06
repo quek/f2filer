@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -190,4 +191,110 @@ pub fn get_drives() -> Vec<String> {
 #[cfg(not(windows))]
 pub fn get_drives() -> Vec<String> {
     vec!["/".to_string()]
+}
+
+pub fn compress_to_zip(
+    sources: &[PathBuf],
+    dest_dir: &Path,
+    zip_name: &str,
+) -> Result<PathBuf, FileOpError> {
+    let name = if zip_name.ends_with(".zip") {
+        zip_name.to_string()
+    } else {
+        format!("{}.zip", zip_name)
+    };
+    let zip_path = dest_dir.join(&name);
+
+    let file = fs::File::create(&zip_path)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for src in sources {
+        if src.is_dir() {
+            add_dir_to_zip(&mut zip, src, src.file_name().unwrap().as_ref(), options)?;
+        } else {
+            add_file_to_zip(&mut zip, src, src.file_name().unwrap().to_string_lossy().as_ref(), options)?;
+        }
+    }
+
+    zip.finish()
+        .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    Ok(zip_path)
+}
+
+fn add_file_to_zip(
+    zip: &mut zip::ZipWriter<fs::File>,
+    file_path: &Path,
+    name_in_zip: &str,
+    options: zip::write::SimpleFileOptions,
+) -> Result<(), FileOpError> {
+    zip.start_file(name_in_zip, options)
+        .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut f = fs::File::open(file_path)?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    zip.write_all(&buf)?;
+    Ok(())
+}
+
+fn add_dir_to_zip(
+    zip: &mut zip::ZipWriter<fs::File>,
+    dir_path: &Path,
+    prefix: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> Result<(), FileOpError> {
+    for entry in fs::read_dir(dir_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = prefix.join(entry.file_name());
+
+        if path.is_dir() {
+            add_dir_to_zip(zip, &path, &name, options)?;
+        } else {
+            let name_str = name.to_string_lossy().replace('\\', "/");
+            add_file_to_zip(zip, &path, &name_str, options)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn decompress_zip(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, FileOpError> {
+    // Create a directory named after the zip file (without .zip extension)
+    let zip_stem = zip_path.file_stem()
+        .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "No file name",
+        )))?;
+    let extract_dir = dest_dir.join(zip_stem);
+    fs::create_dir_all(&extract_dir)?;
+
+    let file = fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)
+            .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+        let name = entry.enclosed_name()
+            .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid zip entry name",
+            )))?;
+
+        let out_path = extract_dir.join(name);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path)?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut outfile = fs::File::create(&out_path)?;
+            std::io::copy(&mut entry, &mut outfile)?;
+        }
+    }
+
+    Ok(extract_dir)
 }

@@ -246,8 +246,8 @@ impl F2App {
                 enter: i.key_pressed(egui::Key::Enter),
                 g: i.key_pressed(egui::Key::G) && !i.modifiers.shift,
                 shift_g: i.key_pressed(egui::Key::G) && i.modifiers.shift,
-                z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
-                shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
+                u: i.key_pressed(egui::Key::U) && !i.modifiers.shift && !i.modifiers.ctrl,
+                shift_u: i.key_pressed(egui::Key::U) && i.modifiers.shift,
             }
         });
 
@@ -497,8 +497,8 @@ n              :  New directory
 p              :  Drive select
 g              :  Registered directories
 Shift+G        :  Register current directory
-Shift+Z        :  Zip compress selected
-z              :  Zip extract at cursor
+Shift+U        :  Zip compress selected
+u              :  Zip extract at cursor
 v              :  Image/Audio preview
 F3             :  Text viewer
 Ctrl+R         :  Refresh
@@ -546,7 +546,7 @@ PgUp / PgDn    :  Page scroll
         }
 
         // Shift+Z: zip compress selected files
-        if input.shift_z {
+        if input.shift_u {
             let targets = self.active_panel().get_operation_targets();
             if !targets.is_empty() {
                 let sources: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
@@ -569,7 +569,7 @@ PgUp / PgDn    :  Page scroll
         }
 
         // Z: decompress zip at cursor
-        if input.z {
+        if input.u {
             if let Some(entry) = self.active_panel().current_entry() {
                 if !entry.is_dir {
                     let is_zip = entry.path.extension()
@@ -1172,8 +1172,8 @@ struct KeyState {
     enter: bool,
     g: bool,
     shift_g: bool,
-    z: bool,
-    shift_z: bool,
+    u: bool,
+    shift_u: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {
