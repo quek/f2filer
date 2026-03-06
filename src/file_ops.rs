@@ -145,6 +145,61 @@ pub fn delete_to_trash(path: &Path) -> Result<(), FileOpError> {
     trash::delete(path).map_err(|e| FileOpError::TrashError(e.to_string()))
 }
 
+pub fn delete_permanently(path: &Path) -> Result<(), FileOpError> {
+    if path.is_dir() {
+        // Shred all files inside recursively, then remove dirs
+        shred_dir_recursive(path)?;
+    } else {
+        shred_file(path)?;
+    }
+    Ok(())
+}
+
+/// Overwrite file content with random data 3 times, then delete
+fn shred_file(path: &Path) -> Result<(), FileOpError> {
+    use std::io::{Seek, SeekFrom};
+
+    let len = fs::metadata(path)?.len();
+    if len > 0 {
+        let mut file = fs::OpenOptions::new().write(true).open(path)?;
+        let mut buf = vec![0u8; len.min(64 * 1024) as usize];
+
+        for pass in 0u8..3 {
+            file.seek(SeekFrom::Start(0))?;
+            let fill: u8 = match pass {
+                0 => 0xFF,
+                1 => 0x00,
+                2 => 0xAA,
+                _ => 0,
+            };
+            buf.iter_mut().for_each(|b| *b = fill);
+            let mut remaining = len;
+            while remaining > 0 {
+                let chunk = remaining.min(buf.len() as u64) as usize;
+                std::io::Write::write_all(&mut file, &buf[..chunk])?;
+                remaining -= chunk as u64;
+            }
+            file.sync_all()?;
+        }
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+fn shred_dir_recursive(dir: &Path) -> Result<(), FileOpError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            shred_dir_recursive(&path)?;
+        } else {
+            shred_file(&path)?;
+        }
+    }
+    fs::remove_dir(dir)?;
+    Ok(())
+}
+
 pub fn rename_file(old_path: &Path, new_name: &str) -> Result<PathBuf, FileOpError> {
     let parent = old_path.parent().ok_or_else(|| {
         FileOpError::IoError(std::io::Error::new(

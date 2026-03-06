@@ -30,6 +30,7 @@ pub struct ConfirmDialog {
 #[derive(Clone)]
 pub enum ConfirmAction {
     Delete(Vec<std::path::PathBuf>),
+    DeletePermanent(Vec<std::path::PathBuf>),
     CopyOverwrite {
         sources: Vec<std::path::PathBuf>,
         dest: std::path::PathBuf,

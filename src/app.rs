@@ -247,7 +247,8 @@ impl F2App {
                 f3: i.key_pressed(egui::Key::F3),
                 c: i.key_pressed(egui::Key::C) && !i.modifiers.ctrl,
                 m: i.key_pressed(egui::Key::M),
-                d: i.key_pressed(egui::Key::D),
+                d: i.key_pressed(egui::Key::D) && !i.modifiers.shift,
+                shift_d: i.key_pressed(egui::Key::D) && i.modifiers.shift,
                 r: i.key_pressed(egui::Key::R) && !i.modifiers.ctrl,
                 n: i.key_pressed(egui::Key::N),
                 o: i.key_pressed(egui::Key::O),
@@ -459,6 +460,24 @@ impl F2App {
             }
         }
 
+        // Shift+D: permanent delete (with confirmation)
+        if input.shift_d {
+            let targets = self.active_panel().get_operation_targets();
+            if !targets.is_empty() {
+                let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
+                let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
+                self.dialog.confirm = Some(ConfirmDialog {
+                    title: "⚠ Permanent Delete".to_string(),
+                    message: format!(
+                        "PERMANENTLY delete {} item(s)?\n{}\n\nThis cannot be undone!",
+                        names.len(),
+                        names.join(", ")
+                    ),
+                    action: ConfirmAction::DeletePermanent(paths),
+                });
+            }
+        }
+
         // r: rename
         if input.r {
             if let Some(entry) = self.active_panel().current_entry() {
@@ -505,6 +524,7 @@ o              :  Sync opposite panel
 c              :  Copy selected → opposite
 m              :  Move selected → opposite
 d              :  Delete selected (trash)
+Shift+D        :  Permanent delete (no undo)
 r              :  Rename
 n              :  New directory
 p              :  Drive select
@@ -721,6 +741,11 @@ PgUp / PgDn    :  Page scroll
                             paths: succeeded,
                         });
                     }
+                    self.active_panel_mut().refresh();
+                }
+                ConfirmAction::DeletePermanent(paths) => {
+                    let (msg, _) = batch_op(&paths, "Permanently deleted", file_ops::delete_permanently);
+                    self.status_message = msg;
                     self.active_panel_mut().refresh();
                 }
                 ConfirmAction::CopyOverwrite { sources, dest } => {
@@ -1318,6 +1343,7 @@ struct KeyState {
     shift_g: bool,
     u: bool,
     shift_u: bool,
+    shift_d: bool,
     z: bool,
     shift_z: bool,
 }
