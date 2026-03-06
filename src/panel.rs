@@ -441,7 +441,7 @@ impl FilePanel {
         let row_height = 20.0;
         let visible_count = self.visible_count();
 
-        egui::ScrollArea::vertical()
+        let scroll_output = egui::ScrollArea::vertical()
             .id_salt(panel_id.with("scroll"))
             .auto_shrink([false; 2])
             .show_rows(ui, row_height, visible_count, |ui, row_range| {
@@ -567,12 +567,38 @@ impl FilePanel {
                         }
                     }
 
-                    // Scroll to cursor
-                    if is_cursor {
-                        ui.scroll_to_rect(row_rect, Some(egui::Align::Center));
-                    }
                 }
             });
+
+        // Ensure cursor is visible — scroll_to_rect inside show_rows only works
+        // for rows already in the rendered range; when cursor jumps off-screen
+        // (End, Home, wrap-around) we adjust the scroll offset directly.
+        if is_active && visible_count > 0 {
+            let spacing_y = ui.spacing().item_spacing.y;
+            let row_h = row_height + spacing_y;
+            let cursor_top = self.cursor as f32 * row_h;
+            let cursor_bottom = cursor_top + row_height;
+            let offset = scroll_output.state.offset.y;
+            let viewport_h = scroll_output.inner_rect.height();
+
+            let new_offset = if cursor_top < offset {
+                // Cursor is above viewport — scroll up
+                cursor_top
+            } else if cursor_bottom > offset + viewport_h {
+                // Cursor is below viewport — scroll down
+                cursor_bottom - viewport_h
+            } else {
+                offset
+            };
+
+            if (new_offset - offset).abs() > 0.5 {
+                let mut state = scroll_output.state;
+                let total_h = visible_count as f32 * row_h - spacing_y;
+                let max_off = (total_h - viewport_h).max(0.0);
+                state.offset.y = new_offset.clamp(0.0, max_off);
+                state.store(ui.ctx(), scroll_output.id);
+            }
+        }
 
         // Drop highlight overlay
         if self.drop_highlight {

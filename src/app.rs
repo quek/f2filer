@@ -254,6 +254,7 @@ impl F2App {
                 o: i.key_pressed(egui::Key::O),
                 ctrl_a: i.key_pressed(egui::Key::A) && i.modifiers.ctrl,
                 ctrl_r: i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
+                q: i.key_pressed(egui::Key::Q) && !i.modifiers.ctrl,
                 ctrl_q: i.key_pressed(egui::Key::Q) && i.modifiers.ctrl,
                 period: i.key_pressed(egui::Key::Period) && i.modifiers.ctrl,
                 colon: i.key_pressed(egui::Key::Semicolon),
@@ -338,8 +339,8 @@ impl F2App {
             self.status_message = "Refreshed".to_string();
         }
 
-        // Ctrl+Q: quit
-        if input.ctrl_q {
+        // q / Ctrl+Q: quit
+        if input.q || input.ctrl_q {
             self.save_config();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -1331,6 +1332,7 @@ struct KeyState {
     o: bool,
     ctrl_a: bool,
     ctrl_r: bool,
+    q: bool,
     ctrl_q: bool,
     period: bool,
     colon: bool,
