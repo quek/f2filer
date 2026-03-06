@@ -8,6 +8,7 @@ use crate::file_item;
 use crate::file_ops;
 use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
+use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
 use crate::viewer::FileViewer;
 
@@ -26,6 +27,7 @@ pub struct F2App {
     image_preview: Option<ImagePreview>,
     image_cache: ImageCache,
     audio_preview: Option<AudioPreview>,
+    video_preview: Option<VideoPreview>,
     preview_mode: bool,
     command_line: String,
     command_mode: bool,
@@ -57,6 +59,7 @@ impl F2App {
             image_preview: None,
             image_cache: ImageCache::new(),
             audio_preview: None,
+            video_preview: None,
             preview_mode: false,
             command_line: String::new(),
             command_mode: false,
@@ -104,12 +107,7 @@ impl F2App {
         let entry = match entry {
             Some(e) => e,
             None => {
-                self.image_preview = None;
-                self.image_cache.clear_wanted();
-                if let Some(ap) = &mut self.audio_preview {
-                    ap.stop();
-                }
-                self.audio_preview = None;
+                self.clear_all_previews();
                 return;
             }
         };
@@ -118,6 +116,7 @@ impl F2App {
             // Audio file
             self.image_preview = None;
             self.image_cache.clear_wanted();
+            self.stop_video_preview();
             // Only reload if different file
             let already_loaded = self.audio_preview.as_ref()
                 .map(|ap| ap.title == entry.name)
@@ -128,22 +127,51 @@ impl F2App {
                 }
                 self.audio_preview = audio_viewer::load(&entry.path, ctx);
             }
-        } else if image_viewer::is_image_file(&entry.path) {
-            // Image file
-            if let Some(ap) = &mut self.audio_preview {
-                ap.stop();
-            }
-            self.audio_preview = None;
-            self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
-        } else {
-            // Neither
+        } else if video_viewer::is_video_file(&entry.path) {
+            // Video file
             self.image_preview = None;
             self.image_cache.clear_wanted();
             if let Some(ap) = &mut self.audio_preview {
                 ap.stop();
             }
             self.audio_preview = None;
+            // Only reload if different file
+            let already_loaded = self.video_preview.as_ref()
+                .map(|vp| vp.title == entry.name)
+                .unwrap_or(false);
+            if !already_loaded {
+                self.stop_video_preview();
+                self.video_preview = video_viewer::load(&entry.path, ctx);
+            }
+        } else if image_viewer::is_image_file(&entry.path) {
+            // Image file
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
+            self.stop_video_preview();
+            self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
+        } else {
+            // None
+            self.clear_all_previews();
         }
+    }
+
+    fn clear_all_previews(&mut self) {
+        self.image_preview = None;
+        self.image_cache.clear_wanted();
+        if let Some(ap) = &mut self.audio_preview {
+            ap.stop();
+        }
+        self.audio_preview = None;
+        self.stop_video_preview();
+    }
+
+    fn stop_video_preview(&mut self) {
+        if let Some(vp) = &mut self.video_preview {
+            vp.stop();
+        }
+        self.video_preview = None;
     }
 
     fn save_config(&mut self) {
@@ -330,11 +358,7 @@ impl F2App {
         if input.v {
             if self.preview_mode {
                 self.preview_mode = false;
-                self.image_preview = None;
-                if let Some(ap) = &mut self.audio_preview {
-                    ap.stop();
-                }
-                self.audio_preview = None;
+                self.clear_all_previews();
             } else {
                 self.preview_mode = true;
                 self.update_preview(ctx);
@@ -875,9 +899,10 @@ impl eframe::App for F2App {
             let right_panel = &mut self.right_panel;
             let image_preview = &self.image_preview;
             let audio_preview = &mut self.audio_preview;
+            let video_preview = &mut self.video_preview;
             let left_is_inactive = active == ActivePanel::Right;
             let right_is_inactive = active == ActivePanel::Left;
-            let has_preview = image_preview.is_some() || audio_preview.is_some();
+            let has_preview = image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
 
             ui.columns(2, |columns| {
                 // Left panel
@@ -894,7 +919,9 @@ impl eframe::App for F2App {
                     ))
                     .show(&mut columns[0], |ui| {
                         if left_is_inactive && has_preview {
-                            if let Some(ap) = audio_preview.as_mut() {
+                            if let Some(vp) = video_preview.as_mut() {
+                                vp.ui(ui);
+                            } else if let Some(ap) = audio_preview.as_mut() {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
@@ -922,7 +949,9 @@ impl eframe::App for F2App {
                     ))
                     .show(&mut columns[1], |ui| {
                         if right_is_inactive && has_preview {
-                            if let Some(ap) = audio_preview.as_mut() {
+                            if let Some(vp) = video_preview.as_mut() {
+                                vp.ui(ui);
+                            } else if let Some(ap) = audio_preview.as_mut() {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);

@@ -9,6 +9,7 @@ mod panel;
 mod sort;
 mod audio_viewer;
 mod image_viewer;
+mod video_viewer;
 mod viewer;
 
 use app::F2App;
