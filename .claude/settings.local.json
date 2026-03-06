@@ -14,7 +14,9 @@
       "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2\")",
       "Bash(powershell -Command \"Stop-Process -Name f2filer -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")",
       "Bash(git add Cargo.toml Cargo.lock src/audio_viewer.rs src/main.rs src/app.rs src/config.rs src/dialog.rs .claude/settings.local.json)",
-      "Bash(git add src/audio_viewer.rs src/app.rs .claude/settings.local.json)"
+      "Bash(git add src/audio_viewer.rs src/app.rs .claude/settings.local.json)",
+      "Bash(git commit:*)",
+      "Bash(git add README.md CLAUDE.md .claude/settings.local.json)"
     ]
   }
 }
