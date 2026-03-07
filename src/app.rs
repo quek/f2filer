@@ -11,7 +11,7 @@ use crate::image_viewer::{self, ImageCache, ImagePreview};
 use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
 use crate::undo::{FileOperation, UndoHistory};
-use crate::viewer::FileViewer;
+use crate::viewer::TextPreview;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ActivePanel {
@@ -24,7 +24,7 @@ pub struct F2App {
     right_panel: FilePanel,
     active: ActivePanel,
     dialog: DialogState,
-    viewer: Option<FileViewer>,
+    text_preview: Option<TextPreview>,
     image_preview: Option<ImagePreview>,
     image_cache: ImageCache,
     audio_preview: Option<AudioPreview>,
@@ -58,7 +58,7 @@ impl F2App {
             right_panel: FilePanel::new(right_dir),
             active: ActivePanel::Left,
             dialog: DialogState::default(),
-            viewer: None,
+            text_preview: None,
             image_preview: None,
             image_cache: ImageCache::new(),
             audio_preview: None,
@@ -119,6 +119,7 @@ impl F2App {
 
         if audio_viewer::is_audio_file(&entry.path) {
             // Audio file
+            self.text_preview = None;
             self.image_preview = None;
             self.image_cache.clear_wanted();
             self.stop_video_preview();
@@ -134,6 +135,7 @@ impl F2App {
             }
         } else if video_viewer::is_video_file(&entry.path) {
             // Video file
+            self.text_preview = None;
             self.image_preview = None;
             self.image_cache.clear_wanted();
             if let Some(ap) = &mut self.audio_preview {
@@ -150,6 +152,7 @@ impl F2App {
             }
         } else if image_viewer::is_image_file(&entry.path) {
             // Image file
+            self.text_preview = None;
             if let Some(ap) = &mut self.audio_preview {
                 ap.stop();
             }
@@ -157,12 +160,25 @@ impl F2App {
             self.stop_video_preview();
             self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
         } else {
-            // None
-            self.clear_all_previews();
+            // Text file (fallback)
+            self.image_preview = None;
+            self.image_cache.clear_wanted();
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
+            self.stop_video_preview();
+            let already_loaded = self.text_preview.as_ref()
+                .map(|tp| tp.title == entry.name)
+                .unwrap_or(false);
+            if !already_loaded {
+                self.text_preview = TextPreview::load(&entry.path);
+            }
         }
     }
 
     fn clear_all_previews(&mut self) {
+        self.text_preview = None;
         self.image_preview = None;
         self.image_cache.clear_wanted();
         if let Some(ap) = &mut self.audio_preview {
@@ -285,11 +301,8 @@ impl F2App {
     }
 
     fn handle_keyboard(&mut self, ctx: &egui::Context) {
-        // Don't handle keys when dialog is open or viewer is active or command mode
+        // Don't handle keys when dialog is open or command mode
         if self.dialog.is_open() {
-            return;
-        }
-        if self.viewer.as_ref().is_some_and(|v| v.open) {
             return;
         }
         if self.command_mode {
@@ -314,7 +327,6 @@ impl F2App {
                 end: i.key_pressed(egui::Key::End),
                 page_up: i.key_pressed(egui::Key::PageUp),
                 page_down: i.key_pressed(egui::Key::PageDown),
-                f3: i.key_pressed(egui::Key::F3),
                 c: i.key_pressed(egui::Key::C) && !i.modifiers.ctrl,
                 m: i.key_pressed(egui::Key::M),
                 d: i.key_pressed(egui::Key::D) && !i.modifiers.shift,
@@ -424,15 +436,6 @@ impl F2App {
             let show = !self.active_panel().show_hidden;
             self.active_panel_mut().show_hidden = show;
             self.active_panel_mut().refresh();
-        }
-
-        // F3: viewer
-        if input.f3 {
-            if let Some(entry) = self.active_panel().current_entry() {
-                if !entry.is_dir {
-                    self.viewer = FileViewer::open(&entry.path);
-                }
-            }
         }
 
         // v: toggle preview mode
@@ -651,8 +654,7 @@ Shift+U        :  Zip compress selected
 u              :  Zip extract at cursor
 z              :  Undo last operation
 Shift+Z        :  Redo
-v              :  Image/Audio preview
-F3             :  Text viewer
+v              :  Preview (text/image/audio/video)
 Ctrl+R         :  Refresh
 Ctrl+.         :  Toggle hidden files
 Ctrl+Q         :  Quit
@@ -1073,13 +1075,7 @@ impl eframe::App for F2App {
         let result = show_dialogs(ctx, &mut self.dialog);
         self.handle_dialog_result(ctx, result);
 
-        // Show viewer if open
-        if let Some(viewer) = &mut self.viewer {
-            viewer.ui(ctx);
-            if !viewer.open {
-                self.viewer = None;
-            }
-        }
+
 
 
         // Top panel: drive buttons
@@ -1157,12 +1153,13 @@ impl eframe::App for F2App {
             let active = self.active;
             let left_panel = &mut self.left_panel;
             let right_panel = &mut self.right_panel;
+            let text_preview = &self.text_preview;
             let image_preview = &self.image_preview;
             let audio_preview = &mut self.audio_preview;
             let video_preview = &mut self.video_preview;
             let left_is_inactive = active == ActivePanel::Right;
             let right_is_inactive = active == ActivePanel::Left;
-            let has_preview = image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
+            let has_preview = text_preview.is_some() || image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
 
             ui.columns(2, |columns| {
                 // Left panel
@@ -1185,6 +1182,8 @@ impl eframe::App for F2App {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
+                            } else if let Some(tp) = text_preview.as_ref() {
+                                tp.ui(ui);
                             }
                             // Drop highlight on preview panel
                             if left_panel.drop_highlight {
@@ -1215,6 +1214,8 @@ impl eframe::App for F2App {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
+                            } else if let Some(tp) = text_preview.as_ref() {
+                                tp.ui(ui);
                             }
                             // Drop highlight on preview panel
                             if right_panel.drop_highlight {
@@ -1616,7 +1617,6 @@ struct KeyState {
     end: bool,
     page_up: bool,
     page_down: bool,
-    f3: bool,
     c: bool,
     m: bool,
     d: bool,
