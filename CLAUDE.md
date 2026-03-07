@@ -43,6 +43,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - WAVプレビューは再生（rodio ストリーミング）と波形読み込み（hound バックグラウンドスレッド）を分離して即時再生
 - WAV再生時は先頭の無音部分を自動スキップ（閾値 0.01）
 - ファイルリストのカラムは `ui.painter().text()` で直接ピクセル位置に描画（レイアウトシステムをバイパス）
+- WSL ディストリビューションは `wsl.exe --list --quiet`（UTF-16LE）で検出しドライブ一覧に `WSL:distro` として統合（`read_dir` は UNC サーバー名に非対応）
+- UNC パスの識別は `std::path::Prefix::UNC` を使用し、WSL 固有ではなく汎用的に処理
+- UNC パス上のファイル削除はゴミ箱が使えないため `fs::remove_file` / `fs::remove_dir_all` にフォールバック
+- UNC share root（`\\server\share`）からの上方ナビゲーションは Rust の `Path::parent()` が `None` を返すことで自然に防止される
 
 ## Coding Principles
 
@@ -62,7 +66,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 
 ### Security
 - ユーザー入力のパスは必ず検証する
-- ファイル削除はトラッシュ（ゴミ箱）経由で行う（`trash` crate）
+- ファイル削除はトラッシュ（ゴミ箱）経由で行う（`trash` crate）。UNC パスはゴミ箱非対応のため直接削除にフォールバックし、確認ダイアログで警告表示
 - 破壊的操作（削除、上書き）は必ず確認ダイアログを表示する
 - Windowsファイル属性の安全な読み取り
 - パストラバーサル攻撃を防ぐ

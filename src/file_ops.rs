@@ -144,7 +144,25 @@ fn move_file_or_dir_inner(src: &Path, dest_dir: &Path, overwrite: bool) -> Resul
 }
 
 pub fn delete_to_trash(path: &Path) -> Result<(), FileOpError> {
+    // UNC paths (including WSL) have no recycle bin; fall back to permanent deletion
+    if is_unc_path(path) {
+        return delete_permanently_simple(path);
+    }
     trash::delete(path).map_err(|e| FileOpError::TrashError(e.to_string()))
+}
+
+/// Simple permanent deletion without shredding (for UNC/network paths)
+fn delete_permanently_simple(path: &Path) -> Result<(), FileOpError> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn is_unc_path(path: &Path) -> bool {
+    path.to_string_lossy().starts_with(r"\\")
 }
 
 pub fn delete_permanently(path: &Path) -> Result<(), FileOpError> {
@@ -656,6 +674,31 @@ pub fn get_drives() -> Vec<String> {
         let path = Path::new(&drive);
         if path.exists() {
             drives.push(format!("{}:", letter as char));
+        }
+    }
+    // Detect WSL distributions via wsl.exe (read_dir on UNC server root is unsupported)
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    if let Ok(output) = std::process::Command::new("wsl.exe")
+        .args(["--list", "--quiet"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            // wsl.exe outputs UTF-16LE
+            let u16_data: Vec<u16> = output
+                .stdout
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            let decoded = String::from_utf16_lossy(&u16_data);
+            for line in decoded.lines() {
+                let name = line.trim();
+                if !name.is_empty() {
+                    drives.push(format!("WSL:{}", name));
+                }
+            }
         }
     }
     drives

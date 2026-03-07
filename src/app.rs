@@ -213,6 +213,20 @@ impl F2App {
                 return path;
             }
         }
+        if let Some(distro) = drive.strip_prefix("WSL:") {
+            // WSL drives: try \\wsl$ first (more compatible), then \\wsl.localhost
+            for base in &[r"\\wsl$", r"\\wsl.localhost"] {
+                let path = PathBuf::from(format!(r"{}\{}", base, distro));
+                if path.exists() {
+                    return path;
+                }
+            }
+            return PathBuf::from(format!(r"\\wsl$\{}", distro));
+        }
+        if drive.starts_with(r"\\") {
+            // Generic UNC path: drive is already "\\server\share"
+            return PathBuf::from(format!(r"{}\", drive));
+        }
         PathBuf::from(format!("{}\\", drive))
     }
 
@@ -497,9 +511,19 @@ impl F2App {
             if !targets.is_empty() {
                 let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
                 let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
+                let is_unc = paths.iter().any(|p| p.to_string_lossy().starts_with(r"\\"));
+                let message = if is_unc {
+                    format!(
+                        "PERMANENTLY delete {} item(s)?\n{}\n\nNetwork path: recycle bin is not available.",
+                        names.len(),
+                        names.join(", ")
+                    )
+                } else {
+                    format!("Delete {} item(s)?\n{}", names.len(), names.join(", "))
+                };
                 self.dialog.confirm = Some(ConfirmDialog {
-                    title: "Delete".to_string(),
-                    message: format!("Delete {} item(s)?\n{}", names.len(), names.join(", ")),
+                    title: if is_unc { "Delete (permanent)".to_string() } else { "Delete".to_string() },
+                    message,
                     action: ConfirmAction::Delete(paths),
                 });
             }
@@ -1237,6 +1261,16 @@ impl F2App {
                     if show { "shown" } else { "hidden" }
                 );
             }
+            _ if cmd.starts_with("cd ") => {
+                let target = cmd[3..].trim();
+                let path = PathBuf::from(target);
+                if path.is_dir() {
+                    self.active_panel_mut().navigate_to(path);
+                    self.save_config();
+                } else {
+                    self.status_message = format!("Directory not found: {}", target);
+                }
+            }
             _ => {
                 self.status_message = format!("Unknown command: {}", cmd);
             }
@@ -1273,14 +1307,34 @@ fn paint_drop_highlight(ui: &mut egui::Ui) {
     );
 }
 
-/// Extract drive letter (e.g. "C:") from a path like "C:\Users\foo".
+/// Extract drive identifier from a path.
+/// Returns "C:" for regular drives, "WSL:distro" for WSL UNC paths,
+/// or "\\\\server\share" for other UNC paths.
 fn drive_letter(path: &std::path::Path) -> Option<String> {
-    let s = path.to_string_lossy();
-    if s.len() >= 2 && s.as_bytes()[1] == b':' {
-        Some(s[..2].to_uppercase())
-    } else {
-        None
+    use std::path::Component;
+    for comp in path.components() {
+        if let Component::Prefix(prefix) = comp {
+            match prefix.kind() {
+                std::path::Prefix::UNC(server, share) => {
+                    let server = server.to_string_lossy();
+                    let share = share.to_string_lossy();
+                    // WSL paths: use "WSL:distro" as drive identifier
+                    if server.eq_ignore_ascii_case("wsl.localhost")
+                        || server.eq_ignore_ascii_case("wsl$")
+                    {
+                        return Some(format!("WSL:{}", share));
+                    }
+                    // Generic UNC: use "\\server\share" as drive identifier
+                    return Some(format!(r"\\{}\{}", server, share));
+                }
+                std::path::Prefix::Disk(letter) => {
+                    return Some(format!("{}:", (letter as char).to_ascii_uppercase()));
+                }
+                _ => return None,
+            }
+        }
     }
+    None
 }
 
 fn restore_dir(saved: &Option<String>) -> Option<PathBuf> {
