@@ -3,6 +3,9 @@
 プロジェクト概要、技術スタック、アーキテクチャ、キーバインド、設定については [README.md](README.md) を参照。
 
 ## Development Workflow
+
+**重要: Bashコマンドに `cd` を付けないこと。** ワーキングディレクトリは常に `F:\dev\f2filer` に設定済み。
+
 ```bash
 # ビルド
 cargo build

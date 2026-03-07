@@ -254,7 +254,7 @@ impl F2App {
                 r: i.key_pressed(egui::Key::R) && !i.modifiers.ctrl,
                 n: i.key_pressed(egui::Key::N),
                 o: i.key_pressed(egui::Key::O),
-                ctrl_a: i.key_pressed(egui::Key::A) && i.modifiers.ctrl,
+                a: i.key_pressed(egui::Key::A) && !i.modifiers.ctrl,
                 ctrl_r: i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
                 q: i.key_pressed(egui::Key::Q) && !i.modifiers.ctrl,
                 ctrl_q: i.key_pressed(egui::Key::Q) && i.modifiers.ctrl,
@@ -331,8 +331,8 @@ impl F2App {
             self.active_panel_mut().move_cursor(1);
         }
 
-        // Ctrl+A: select all
-        if input.ctrl_a {
+        // a: select all
+        if input.a {
             self.active_panel_mut().select_all();
         }
 
@@ -1370,7 +1370,7 @@ struct KeyState {
     r: bool,
     n: bool,
     o: bool,
-    ctrl_a: bool,
+    a: bool,
     ctrl_r: bool,
     q: bool,
     ctrl_q: bool,
