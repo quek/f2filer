@@ -382,7 +382,7 @@ impl FilePanel {
 
             if ui
                 .add_sized(
-                    [name_w, 18.0],
+                    [name_w, 22.0],
                     egui::Button::new(
                         egui::RichText::new(format!("Name{}", sort_indicator(SortKey::Name)))
                             .strong(),
@@ -395,7 +395,7 @@ impl FilePanel {
 
             if ui
                 .add_sized(
-                    [ext_w, 18.0],
+                    [ext_w, 22.0],
                     egui::Button::new(
                         egui::RichText::new(format!("Ext{}", sort_indicator(SortKey::Extension)))
                             .strong(),
@@ -408,7 +408,7 @@ impl FilePanel {
 
             if ui
                 .add_sized(
-                    [size_w, 18.0],
+                    [size_w, 22.0],
                     egui::Button::new(
                         egui::RichText::new(format!("Size{}", sort_indicator(SortKey::Size)))
                             .strong(),
@@ -421,7 +421,7 @@ impl FilePanel {
 
             if ui
                 .add_sized(
-                    [ui.available_width(), 18.0],
+                    [ui.available_width(), 22.0],
                     egui::Button::new(
                         egui::RichText::new(format!("Date{}", sort_indicator(SortKey::Date)))
                             .strong(),
@@ -440,13 +440,14 @@ impl FilePanel {
         ui.separator();
 
         // File list
-        let row_height = 20.0;
+        let row_height = 17.0;
         let visible_count = self.visible_count();
 
         let scroll_output = egui::ScrollArea::vertical()
             .id_salt(panel_id.with("scroll"))
             .auto_shrink([false; 2])
             .show_rows(ui, row_height, visible_count, |ui, row_range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
                 for vis_idx in row_range {
                     if vis_idx >= visible_count {
                         break;
@@ -582,7 +583,7 @@ impl FilePanel {
         // for rows already in the rendered range; when cursor jumps off-screen
         // (End, Home, wrap-around) we adjust the scroll offset directly.
         if is_active && visible_count > 0 {
-            let spacing_y = ui.spacing().item_spacing.y;
+            let spacing_y = 0.0_f32; // matches item_spacing.y inside scroll area
             let row_h = row_height + spacing_y;
             let cursor_top = self.cursor as f32 * row_h;
             let cursor_bottom = cursor_top + row_height;

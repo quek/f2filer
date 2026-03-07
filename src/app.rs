@@ -830,4 +830,28 @@ fn setup_fonts(ctx: &egui::Context) {
 
         ctx.set_fonts(fonts);
     }
+
+    // Increase font sizes
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Small,
+        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::new(16.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Monospace,
+        egui::FontId::new(16.0, egui::FontFamily::Monospace),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::new(16.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(22.0, egui::FontFamily::Proportional),
+    );
+    ctx.set_style(style);
 }
