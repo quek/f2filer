@@ -11,18 +11,5 @@
       "Bash(powershell -Command \"Stop-Process -Name f2filer *\")",
       "WebFetch(domain:docs.rs)"
     ]
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r \".tool_input.command // empty\"); if echo \"$CMD\" | grep -q \"git commit\"; then cargo build --release; fi'"
-          }
-        ]
-      }
-    ]
   }
 }

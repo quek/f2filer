@@ -20,6 +20,31 @@ pub fn show_file_properties(path: &std::path::Path) {
     }
 }
 
+/// Open a file using the application associated with .txt extension.
+#[cfg(windows)]
+pub fn open_with_text_editor(path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_CLASSNAME};
+
+    let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let class: Vec<u16> = ".txt\0".encode_utf16().collect();
+
+    let mut sei = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_CLASSNAME,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(path_wide.as_ptr()),
+        lpClass: PCWSTR(class.as_ptr()),
+        ..Default::default()
+    };
+
+    unsafe {
+        let _ = ShellExecuteExW(&mut sei);
+    }
+}
+
 #[cfg(windows)]
 pub fn show_context_menu(path: &std::path::Path) {
     use std::os::windows::ffi::OsStrExt;

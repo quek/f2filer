@@ -46,6 +46,7 @@ struct KeyState {
     shift_z: bool,
     y: bool,
     shift_x: bool,
+    e: bool,
     alt_enter: bool,
     backslash: bool,
 }
@@ -91,6 +92,7 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
         y: i.key_pressed(egui::Key::Y) && !i.modifiers.shift && !i.modifiers.ctrl,
         shift_x: i.key_pressed(egui::Key::X) && i.modifiers.shift,
+        e: i.key_pressed(egui::Key::E),
         alt_enter: i.key_pressed(egui::Key::Enter) && i.modifiers.alt,
         backslash: i.key_pressed(egui::Key::Backslash),
     })
@@ -181,6 +183,15 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
                 app.save_config();
             } else {
                 open::that(&entry.path).ok();
+            }
+        }
+    }
+
+    // e: open with text editor (.txt association)
+    if input.e {
+        if let Some(entry) = app.active_panel().current_entry() {
+            if !entry.is_dir && entry.name != ".." {
+                crate::shell::open_with_text_editor(&entry.path);
             }
         }
     }
@@ -451,6 +462,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, input: &KeyState) {
             message: "\
 j / k / ↑ / ↓  :  Cursor move
 l              :  Open dir / Execute file
+e              :  Open with text editor
 h              :  Parent directory
 i              :  Switch panel
 Space          :  Toggle select
