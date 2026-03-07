@@ -98,6 +98,29 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
     })
 }
 
+/// Detect Ctrl+C/V using Win32 GetAsyncKeyState, bypassing egui's event system.
+#[cfg(windows)]
+fn detect_ctrl_cv() -> (bool, bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    static PREV_C: AtomicBool = AtomicBool::new(false);
+    static PREV_V: AtomicBool = AtomicBool::new(false);
+
+    unsafe {
+        let ctrl = GetAsyncKeyState(0x11) < 0; // VK_CONTROL
+        let c_down = ctrl && GetAsyncKeyState(0x43) < 0;
+        let v_down = ctrl && GetAsyncKeyState(0x56) < 0;
+
+        let prev_c = PREV_C.load(Ordering::Relaxed);
+        PREV_C.store(c_down, Ordering::Relaxed);
+        let prev_v = PREV_V.load(Ordering::Relaxed);
+        PREV_V.store(v_down, Ordering::Relaxed);
+
+        (c_down && !prev_c, v_down && !prev_v)
+    }
+}
+
 pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
     // Don't handle keys when dialog is open or command mode
     if app.dialog.is_open() {
@@ -204,12 +227,64 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
         }
     }
 
-    // c / m: copy or move
+    // c / m: copy or move to opposite panel
     if input.c {
         start_copy_or_move(app, ctx, false);
     }
     if input.m {
         start_copy_or_move(app, ctx, true);
+    }
+
+    // Ctrl+C / Ctrl+V: clipboard file operations
+    let (evt_copy, evt_paste) = detect_ctrl_cv();
+
+    // Consume egui clipboard events so they don't interfere
+    ctx.input_mut(|i| {
+        i.events.retain(|e| !matches!(e,
+            egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)
+        ));
+    });
+
+    if evt_copy {
+        let targets = app.active_panel().get_operation_targets();
+        if !targets.is_empty() {
+            let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
+            crate::shell::copy_files_to_clipboard(&paths, false);
+            app.status_message = format!("Copied {} item(s) to clipboard", paths.len());
+        }
+    }
+
+    // Ctrl+V: paste files from clipboard
+    if evt_paste {
+        if let Some((sources, is_cut)) = crate::shell::paste_files_from_clipboard() {
+            if !sources.is_empty() {
+                let dest = app.active_panel().current_dir.clone();
+                let conflicts = file_ops::check_conflicts(&sources, &dest);
+
+                if conflicts.is_empty() {
+                    let op = if is_cut {
+                        OpKind::Move { sources, dest_dir: dest, overwrite: false }
+                    } else {
+                        OpKind::Copy { sources, dest_dir: dest, overwrite: false }
+                    };
+                    app.start_background_op(ctx, op);
+                } else {
+                    let action = if is_cut {
+                        ConfirmAction::MoveOverwrite { sources, dest }
+                    } else {
+                        ConfirmAction::CopyOverwrite { sources, dest }
+                    };
+                    app.dialog.confirm = Some(ConfirmDialog {
+                        title: "Overwrite?".to_string(),
+                        message: format!(
+                            "The following files already exist:\n{}\n\nOverwrite?",
+                            conflicts.join(", ")
+                        ),
+                        action,
+                    });
+                }
+            }
+        }
     }
 
     // d: delete (with confirmation)
@@ -471,6 +546,8 @@ f              :  Focus filter
 o              :  Sync opposite panel
 c              :  Copy selected → opposite
 m              :  Move selected → opposite
+Ctrl+C         :  Copy selected to clipboard
+Ctrl+V         :  Paste from clipboard
 d              :  Delete selected (trash)
 Shift+D        :  Permanent delete (no undo)
 Shift+X        :  Open recycle bin
