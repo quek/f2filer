@@ -118,8 +118,14 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
+            .max_height(400.0)
             .show(ctx, |ui| {
-                ui.label(&message);
+                ui.set_min_width(300.0);
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        ui.label(&message);
+                    });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui.button("Yes (y)").clicked() {
@@ -202,8 +208,14 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
+            .max_height(400.0)
             .show(ctx, |ui| {
-                ui.label(&message);
+                ui.set_min_width(300.0);
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        ui.label(&message);
+                    });
                 ui.add_space(10.0);
                 if ui.button("OK").clicked() {
                     result = DialogResult::Closed;
