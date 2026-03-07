@@ -16,6 +16,7 @@ cargo build
 ```
 
 Note: bash上で `taskkill /F /IM f2filer.exe` はワーキングディレクトリが `F:/` の場合パース失敗するため、PowerShellの `Stop-Process` を使用する。
+Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOWS` にtmpファイルを書けず失敗する。リリースビルドは `cargo build --release` を直接実行すること。
 
 ## Design Decisions
 - コピー/移動/削除はSpaceで選択したファイルのみ対象（カーソル位置のファイルは対象外）
@@ -59,3 +60,8 @@ Note: bash上で `taskkill /F /IM f2filer.exe` はワーキングディレクト
 - 破壊的操作（削除、上書き）は必ず確認ダイアログを表示する
 - Windowsファイル属性の安全な読み取り
 - パストラバーサル攻撃を防ぐ
+
+## Continuous Improvement
+- このCLAUDE.md自体を常に改善・更新していく（設計判断、環境の注意点、ワークフローの変更など）
+- コミット前に作業を振り返り、得られた知見があれば CLAUDE.md / MEMORY.md / settings.local.json に記録する
+- 既存の記録が古くなっていたら更新・削除する

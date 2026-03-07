@@ -18,12 +18,27 @@ mod viewer;
 use app::F2App;
 use config::Config;
 
+fn load_icon() -> eframe::egui::IconData {
+    let icon_bytes = include_bytes!("../assets/icon.png");
+    let img = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon")
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    eframe::egui::IconData {
+        rgba: img.into_raw(),
+        width: w,
+        height: h,
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let config = Config::load();
 
+    let icon = load_icon();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_min_inner_size([800.0, 400.0])
         .with_title("f2filer")
+        .with_icon(icon)
         .with_drag_and_drop(true);
 
     // Restore window size
