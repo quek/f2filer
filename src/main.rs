@@ -3,11 +3,15 @@
 mod app;
 mod config;
 mod dialog;
+mod dialog_handler;
 #[cfg(windows)]
 mod drag_drop;
 mod file_item;
 mod file_ops;
+mod keyboard;
 mod panel;
+#[cfg(windows)]
+mod shell;
 mod sort;
 mod undo;
 mod audio_viewer;

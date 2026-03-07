@@ -10,7 +10,7 @@ use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
 use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
-use crate::undo::{FileOperation, UndoHistory};
+use crate::undo::UndoHistory;
 use crate::viewer::TextPreview;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -20,24 +20,24 @@ pub enum ActivePanel {
 }
 
 pub struct F2App {
-    left_panel: FilePanel,
-    right_panel: FilePanel,
-    active: ActivePanel,
-    dialog: DialogState,
-    text_preview: Option<TextPreview>,
-    image_preview: Option<ImagePreview>,
-    image_cache: ImageCache,
-    audio_preview: Option<AudioPreview>,
-    video_preview: Option<VideoPreview>,
-    preview_mode: bool,
-    command_line: String,
-    command_mode: bool,
-    status_message: String,
-    drives: Vec<String>,
-    config: Config,
+    pub(crate) left_panel: FilePanel,
+    pub(crate) right_panel: FilePanel,
+    pub(crate) active: ActivePanel,
+    pub(crate) dialog: DialogState,
+    pub(crate) text_preview: Option<TextPreview>,
+    pub(crate) image_preview: Option<ImagePreview>,
+    pub(crate) image_cache: ImageCache,
+    pub(crate) audio_preview: Option<AudioPreview>,
+    pub(crate) video_preview: Option<VideoPreview>,
+    pub(crate) preview_mode: bool,
+    pub(crate) command_line: String,
+    pub(crate) command_mode: bool,
+    pub(crate) status_message: String,
+    pub(crate) drives: Vec<String>,
+    pub(crate) config: Config,
     window_pos: Option<egui::Pos2>,
     window_size: Option<egui::Vec2>,
-    undo_history: UndoHistory,
+    pub(crate) undo_history: UndoHistory,
     skip_next_drop: bool,
 }
 
@@ -76,35 +76,35 @@ impl F2App {
         }
     }
 
-    fn active_panel(&self) -> &FilePanel {
+    pub(crate) fn active_panel(&self) -> &FilePanel {
         match self.active {
             ActivePanel::Left => &self.left_panel,
             ActivePanel::Right => &self.right_panel,
         }
     }
 
-    fn active_panel_mut(&mut self) -> &mut FilePanel {
+    pub(crate) fn active_panel_mut(&mut self) -> &mut FilePanel {
         match self.active {
             ActivePanel::Left => &mut self.left_panel,
             ActivePanel::Right => &mut self.right_panel,
         }
     }
 
-    fn inactive_panel(&self) -> &FilePanel {
+    pub(crate) fn inactive_panel(&self) -> &FilePanel {
         match self.active {
             ActivePanel::Left => &self.right_panel,
             ActivePanel::Right => &self.left_panel,
         }
     }
 
-    fn inactive_panel_mut(&mut self) -> &mut FilePanel {
+    pub(crate) fn inactive_panel_mut(&mut self) -> &mut FilePanel {
         match self.active {
             ActivePanel::Left => &mut self.right_panel,
             ActivePanel::Right => &mut self.left_panel,
         }
     }
 
-    fn update_preview(&mut self, ctx: &egui::Context) {
+    pub(crate) fn update_preview(&mut self, ctx: &egui::Context) {
         let entry = self.active_panel().current_entry()
             .filter(|e| !e.is_dir)
             .cloned();
@@ -177,7 +177,7 @@ impl F2App {
         }
     }
 
-    fn clear_all_previews(&mut self) {
+    pub(crate) fn clear_all_previews(&mut self) {
         self.text_preview = None;
         self.image_preview = None;
         self.image_cache.clear_wanted();
@@ -195,7 +195,7 @@ impl F2App {
         self.video_preview = None;
     }
 
-    fn save_config(&mut self) {
+    pub(crate) fn save_config(&mut self) {
         self.config.last_left_dir =
             Some(self.left_panel.current_dir.to_string_lossy().to_string());
         self.config.last_right_dir =
@@ -222,7 +222,7 @@ impl F2App {
     }
 
     /// Resolve drive path: use saved per-drive directory if available, otherwise drive root.
-    fn resolve_drive_path(&self, drive: &str) -> PathBuf {
+    pub(crate) fn resolve_drive_path(&self, drive: &str) -> PathBuf {
         if let Some(saved) = self.config.drive_dirs.get(drive) {
             let path = PathBuf::from(saved);
             if path.exists() {
@@ -246,7 +246,7 @@ impl F2App {
         PathBuf::from(format!("{}\\", drive))
     }
 
-    fn start_background_op(&mut self, ctx: &egui::Context, op_kind: OpKind) {
+    pub(crate) fn start_background_op(&mut self, ctx: &egui::Context, op_kind: OpKind) {
         let total = match &op_kind {
             OpKind::Copy { sources, .. } => sources.len(),
             OpKind::Move { sources, .. } => sources.len(),
@@ -298,483 +298,6 @@ impl F2App {
             handle: progress,
             op_kind,
         });
-    }
-
-    fn handle_keyboard(&mut self, ctx: &egui::Context) {
-        // Don't handle keys when dialog is open or command mode
-        if self.dialog.is_open() {
-            return;
-        }
-        if self.command_mode {
-            return;
-        }
-        if self.active_panel().filter_has_focus {
-            return;
-        }
-
-        let input = ctx.input(|i| {
-            KeyState {
-                tab: i.key_pressed(egui::Key::I),
-                j: i.key_pressed(egui::Key::J),
-                k: i.key_pressed(egui::Key::K),
-                h: i.key_pressed(egui::Key::H),
-                l: i.key_pressed(egui::Key::L),
-                up: i.key_pressed(egui::Key::ArrowUp),
-                down: i.key_pressed(egui::Key::ArrowDown),
-                space: i.key_pressed(egui::Key::Space),
-                insert: i.key_pressed(egui::Key::Insert),
-                home: i.key_pressed(egui::Key::Home),
-                end: i.key_pressed(egui::Key::End),
-                page_up: i.key_pressed(egui::Key::PageUp),
-                page_down: i.key_pressed(egui::Key::PageDown),
-                c: i.key_pressed(egui::Key::C) && !i.modifiers.ctrl,
-                m: i.key_pressed(egui::Key::M),
-                d: i.key_pressed(egui::Key::D) && !i.modifiers.shift,
-                shift_d: i.key_pressed(egui::Key::D) && i.modifiers.shift,
-                r: i.key_pressed(egui::Key::R) && !i.modifiers.ctrl,
-                n: i.key_pressed(egui::Key::N),
-                o: i.key_pressed(egui::Key::O),
-                a: i.key_pressed(egui::Key::A) && !i.modifiers.ctrl,
-                ctrl_r: i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
-                q: i.key_pressed(egui::Key::Q) && !i.modifiers.ctrl,
-                ctrl_q: i.key_pressed(egui::Key::Q) && i.modifiers.ctrl,
-                period: i.key_pressed(egui::Key::Period) && i.modifiers.ctrl,
-                colon: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == ":")),
-                question: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "?")),
-                p: i.key_pressed(egui::Key::P),
-                f: i.key_pressed(egui::Key::F),
-                v: i.key_pressed(egui::Key::V) && !i.modifiers.ctrl,
-                enter: i.key_pressed(egui::Key::Enter) && !i.modifiers.alt,
-                g: i.key_pressed(egui::Key::G) && !i.modifiers.shift,
-                shift_g: i.key_pressed(egui::Key::G) && i.modifiers.shift,
-                u: i.key_pressed(egui::Key::U) && !i.modifiers.shift && !i.modifiers.ctrl,
-                shift_u: i.key_pressed(egui::Key::U) && i.modifiers.shift,
-                z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
-                shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
-                y: i.key_pressed(egui::Key::Y) && !i.modifiers.shift && !i.modifiers.ctrl,
-                shift_x: i.key_pressed(egui::Key::X) && i.modifiers.shift,
-                alt_enter: i.key_pressed(egui::Key::Enter) && i.modifiers.alt,
-                backslash: i.key_pressed(egui::Key::Backslash),
-            }
-        });
-
-        // Tab: switch panel
-        if input.tab {
-            self.active = match self.active {
-                ActivePanel::Left => ActivePanel::Right,
-                ActivePanel::Right => ActivePanel::Left,
-            };
-        }
-
-        // Navigation
-        if input.j || input.down {
-            self.active_panel_mut().move_cursor(1);
-        }
-        if input.k || input.up {
-            self.active_panel_mut().move_cursor(-1);
-        }
-        if input.home {
-            self.active_panel_mut().move_cursor_to_start();
-        }
-        if input.end {
-            self.active_panel_mut().move_cursor_to_end();
-        }
-        if input.page_up {
-            self.active_panel_mut().page_up(20);
-        }
-        if input.page_down {
-            self.active_panel_mut().page_down(20);
-        }
-
-        // l / Enter: open dir / execute file
-        if input.l || input.enter {
-            if let Some(entry) = self.active_panel().current_entry().cloned() {
-                if entry.is_dir {
-                    let dir = entry.path.clone();
-                    self.active_panel_mut().navigate_to(dir);
-                    self.save_config();
-                } else {
-                    open::that(&entry.path).ok();
-                }
-            }
-        }
-
-        // h: parent directory
-        if input.h {
-            if let Some(parent) = self.active_panel().current_dir.parent().map(|p| p.to_path_buf())
-            {
-                self.active_panel_mut().navigate_to(parent);
-                self.save_config();
-            }
-        }
-
-        // Space/Insert: toggle selection
-        if input.space || input.insert {
-            self.active_panel_mut().toggle_select();
-            self.active_panel_mut().move_cursor(1);
-        }
-
-        // a: select all
-        if input.a {
-            self.active_panel_mut().select_all();
-        }
-
-        // Ctrl+R: refresh
-        if input.ctrl_r {
-            self.active_panel_mut().refresh();
-            self.status_message = "Refreshed".to_string();
-        }
-
-        // q / Ctrl+Q: quit
-        if input.q || input.ctrl_q {
-            self.save_config();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-
-        // Ctrl+.: toggle hidden
-        if input.period {
-            let show = !self.active_panel().show_hidden;
-            self.active_panel_mut().show_hidden = show;
-            self.active_panel_mut().refresh();
-        }
-
-        // v: toggle preview mode
-        if input.v {
-            if self.preview_mode {
-                self.preview_mode = false;
-                self.clear_all_previews();
-            } else {
-                self.preview_mode = true;
-                self.update_preview(ctx);
-            }
-        }
-
-        // Update preview on cursor move
-        if self.preview_mode && (input.j || input.k || input.up || input.down
-            || input.page_up || input.page_down || input.home || input.end)
-        {
-            self.update_preview(ctx);
-        }
-
-        // c: copy
-        if input.c {
-            let targets = self.active_panel().get_operation_targets();
-            if !targets.is_empty() {
-                let dest = self.inactive_panel().current_dir.clone();
-                let sources: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-                let conflicts = file_ops::check_conflicts(&sources, &dest);
-
-                if conflicts.is_empty() {
-                    self.start_background_op(ctx, OpKind::Copy {
-                        sources,
-                        dest_dir: dest,
-                        overwrite: false,
-                    });
-                } else {
-                    self.dialog.confirm = Some(ConfirmDialog {
-                        title: "Overwrite?".to_string(),
-                        message: format!(
-                            "The following files already exist:\n{}\n\nOverwrite?",
-                            conflicts.join(", ")
-                        ),
-                        action: ConfirmAction::CopyOverwrite { sources, dest },
-                    });
-                }
-            }
-        }
-
-        // m: move
-        if input.m {
-            let targets = self.active_panel().get_operation_targets();
-            if !targets.is_empty() {
-                let dest = self.inactive_panel().current_dir.clone();
-                let sources: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-                let conflicts = file_ops::check_conflicts(&sources, &dest);
-
-                if conflicts.is_empty() {
-                    self.start_background_op(ctx, OpKind::Move {
-                        sources,
-                        dest_dir: dest,
-                        overwrite: false,
-                    });
-                } else {
-                    self.dialog.confirm = Some(ConfirmDialog {
-                        title: "Overwrite?".to_string(),
-                        message: format!(
-                            "The following files already exist:\n{}\n\nOverwrite?",
-                            conflicts.join(", ")
-                        ),
-                        action: ConfirmAction::MoveOverwrite { sources, dest },
-                    });
-                }
-            }
-        }
-
-        // d: delete (with confirmation)
-        if input.d {
-            let targets = self.active_panel().get_operation_targets();
-            if !targets.is_empty() {
-                let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
-                let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-                let is_unc = paths.iter().any(|p| p.to_string_lossy().starts_with(r"\\"));
-                let message = if is_unc {
-                    format!(
-                        "PERMANENTLY delete {} item(s)?\n{}\n\nNetwork path: recycle bin is not available.",
-                        names.len(),
-                        names.join(", ")
-                    )
-                } else {
-                    format!("Delete {} item(s)?\n{}", names.len(), names.join(", "))
-                };
-                self.dialog.confirm = Some(ConfirmDialog {
-                    title: if is_unc { "Delete (permanent)".to_string() } else { "Delete".to_string() },
-                    message,
-                    action: ConfirmAction::Delete(paths),
-                });
-            }
-        }
-
-        // Shift+D: permanent delete (with confirmation)
-        if input.shift_d {
-            let targets = self.active_panel().get_operation_targets();
-            if !targets.is_empty() {
-                let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
-                let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-                self.dialog.confirm = Some(ConfirmDialog {
-                    title: "⚠ Permanent Delete".to_string(),
-                    message: format!(
-                        "PERMANENTLY delete {} item(s)?\n{}\n\nThis cannot be undone!",
-                        names.len(),
-                        names.join(", ")
-                    ),
-                    action: ConfirmAction::DeletePermanent(paths),
-                });
-            }
-        }
-
-        // Shift+X: open recycle bin
-        if input.shift_x {
-            let _ = std::process::Command::new("explorer.exe")
-                .arg("shell:RecycleBinFolder")
-                .spawn();
-        }
-
-        // Alt+Enter: file properties
-        if input.alt_enter {
-            if let Some(entry) = self.active_panel().current_entry() {
-                if entry.name != ".." {
-                    show_file_properties(&entry.path);
-                }
-            }
-        }
-
-        // \: context menu
-        if input.backslash {
-            if let Some(entry) = self.active_panel().current_entry().cloned() {
-                if entry.name != ".." {
-                    show_context_menu(&entry.path);
-                    self.active_panel_mut().refresh();
-                }
-            }
-        }
-
-        // r: rename
-        if input.r {
-            if let Some(entry) = self.active_panel().current_entry() {
-                if entry.name != ".." {
-                    self.dialog.input = Some(InputDialog {
-                        title: "Rename".to_string(),
-                        value: entry.name.clone(),
-                        action: InputAction::Rename(entry.path.clone()),
-                    });
-                }
-            }
-        }
-
-        // n: new directory
-        if input.n {
-            self.dialog.input = Some(InputDialog {
-                title: "New Directory".to_string(),
-                value: String::new(),
-                action: InputAction::NewDirectory,
-            });
-        }
-
-        // o: sync opposite panel to current directory
-        if input.o {
-            let dir = self.active_panel().current_dir.clone();
-            self.inactive_panel_mut().navigate_to(dir);
-            self.status_message = "Synced opposite panel".to_string();
-            self.save_config();
-        }
-
-        // y: copy current file path to clipboard
-        if input.y {
-            if let Some(entry) = self.active_panel().current_entry() {
-                let path_str = entry.path.to_string_lossy().to_string();
-                match arboard::Clipboard::new() {
-                    Ok(mut clip) => {
-                        if clip.set_text(&path_str).is_ok() {
-                            self.status_message = format!("Copied: {}", path_str);
-                        } else {
-                            self.status_message = "Failed to copy to clipboard".to_string();
-                        }
-                    }
-                    Err(_) => {
-                        self.status_message = "Failed to access clipboard".to_string();
-                    }
-                }
-            }
-        }
-
-        // ?: show help
-        if input.question {
-            self.dialog.message = Some(MessageDialog {
-                title: "Keyboard Shortcuts".to_string(),
-                message: "\
-j / k / ↑ / ↓  :  Cursor move
-l              :  Open dir / Execute file
-h              :  Parent directory
-i              :  Switch panel
-Space          :  Toggle select
-Ctrl+A         :  Select all
-f              :  Focus filter
-o              :  Sync opposite panel
-c              :  Copy selected → opposite
-m              :  Move selected → opposite
-d              :  Delete selected (trash)
-Shift+D        :  Permanent delete (no undo)
-Shift+X        :  Open recycle bin
-r              :  Rename
-n              :  New directory
-p              :  Drive select
-g              :  Registered directories
-Shift+G        :  Register current directory
-Shift+U        :  Zip compress selected
-u              :  Zip extract at cursor
-z              :  Undo last operation
-Shift+Z        :  Redo
-v              :  Preview (text/image/audio/video)
-Ctrl+R         :  Refresh
-Ctrl+.         :  Toggle hidden files
-Ctrl+Q         :  Quit
-Home / End     :  Jump to top / bottom
-PgUp / PgDn    :  Page scroll
-?              :  This help"
-                    .to_string(),
-            });
-        }
-
-        // f: focus filter
-        if input.f {
-            self.active_panel_mut().focus_filter = true;
-        }
-
-        // p: drive selection
-        if input.p {
-            self.dialog.drive = Some(DriveDialog {
-                drives: self.drives.clone(),
-            });
-        }
-
-        // g: registered directories
-        if input.g {
-            self.dialog.registered_dir = Some(RegisteredDirDialog {
-                dirs: self.config.registered_dirs.clone(),
-                cursor: 0,
-            });
-        }
-
-        // Shift+G: register current directory
-        if input.shift_g {
-            let dir = self.active_panel().current_dir.clone();
-            let default_name = dir
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| dir.to_string_lossy().to_string());
-            self.dialog.input = Some(InputDialog {
-                title: "Register Directory".to_string(),
-                value: default_name,
-                action: InputAction::RegisterDirectory(dir),
-            });
-        }
-
-        // Shift+Z: zip compress selected files
-        if input.shift_u {
-            let targets = self.active_panel().get_operation_targets();
-            if !targets.is_empty() {
-                let sources: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-                let default_name = targets
-                    .first()
-                    .map(|t| {
-                        // Strip extension for default zip name
-                        PathBuf::from(&t.name)
-                            .file_stem()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| t.name.clone())
-                    })
-                    .unwrap_or_else(|| "archive".to_string());
-                self.dialog.input = Some(InputDialog {
-                    title: "Zip Compress".to_string(),
-                    value: default_name,
-                    action: InputAction::ZipCompress(sources),
-                });
-            }
-        }
-
-        // Z: decompress zip at cursor
-        if input.u {
-            if let Some(entry) = self.active_panel().current_entry() {
-                if !entry.is_dir {
-                    let is_zip = entry.path.extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_lowercase() == "zip")
-                        .unwrap_or(false);
-                    if is_zip {
-                        let zip_path = entry.path.clone();
-                        let dest = self.inactive_panel().current_dir.clone();
-                        self.start_background_op(ctx, OpKind::ZipDecompress {
-                            zip_path,
-                            dest_dir: dest,
-                        });
-                    }
-                }
-            }
-        }
-
-        // z: undo
-        if input.z {
-            match self.undo_history.undo() {
-                Ok(msg) => {
-                    self.status_message = msg;
-                    self.left_panel.refresh();
-                    self.right_panel.refresh();
-                }
-                Err(msg) => {
-                    self.status_message = msg;
-                }
-            }
-        }
-
-        // Shift+z: redo
-        if input.shift_z {
-            match self.undo_history.redo() {
-                Ok(msg) => {
-                    self.status_message = msg;
-                    self.left_panel.refresh();
-                    self.right_panel.refresh();
-                }
-                Err(msg) => {
-                    self.status_message = msg;
-                }
-            }
-        }
-
-        // :: command mode
-        if input.colon {
-            self.command_mode = true;
-            self.command_line.clear();
-        }
     }
 
     fn handle_file_drop(&mut self, ctx: &egui::Context) {
@@ -837,213 +360,6 @@ PgUp / PgDn    :  Page scroll
         }
     }
 
-    fn handle_dialog_result(&mut self, ctx: &egui::Context, result: DialogResult) {
-        match result {
-            DialogResult::ConfirmYes(action) => match action {
-                ConfirmAction::Delete(paths) => {
-                    self.start_background_op(ctx, OpKind::Delete { paths });
-                }
-                ConfirmAction::DeletePermanent(paths) => {
-                    self.start_background_op(ctx, OpKind::DeletePermanent { paths });
-                }
-                ConfirmAction::CopyOverwrite { sources, dest } => {
-                    self.start_background_op(ctx, OpKind::Copy {
-                        sources,
-                        dest_dir: dest,
-                        overwrite: true,
-                    });
-                }
-                ConfirmAction::MoveOverwrite { sources, dest } => {
-                    self.start_background_op(ctx, OpKind::Move {
-                        sources,
-                        dest_dir: dest,
-                        overwrite: true,
-                    });
-                }
-            },
-            DialogResult::InputOk(value, action) => {
-                if value.is_empty() {
-                    return;
-                }
-                match action {
-                    InputAction::Rename(old_path) => {
-                        match file_ops::rename_file(&old_path, &value) {
-                            Ok(new_path) => {
-                                self.status_message = format!("Renamed to {}", value);
-                                self.undo_history.push(FileOperation::Rename {
-                                    old_path,
-                                    new_path,
-                                });
-                                self.active_panel_mut().refresh();
-                            }
-                            Err(e) => {
-                                self.status_message = format!("Rename error: {}", e);
-                            }
-                        }
-                    }
-                    InputAction::NewDirectory => {
-                        let dir = self.active_panel().current_dir.clone();
-                        match file_ops::create_directory(&dir, &value) {
-                            Ok(path) => {
-                                self.status_message = format!("Created directory: {}", value);
-                                self.undo_history.push(FileOperation::CreateDir { path });
-                                self.active_panel_mut().refresh();
-                            }
-                            Err(e) => {
-                                self.status_message = format!("Error: {}", e);
-                            }
-                        }
-                    }
-                    InputAction::RegisterDirectory(path) => {
-                        // Step 2: ask for shortcut key (default: first char of name)
-                        let default_key = first_char_upper(&value, 'A');
-                        self.dialog.input = Some(InputDialog {
-                            title: format!("Shortcut Key for \"{}\"", value),
-                            value: default_key,
-                            action: InputAction::RegisterDirectoryKey {
-                                path,
-                                name: value,
-                            },
-                        });
-                    }
-                    InputAction::RegisterDirectoryKey { path, name } => {
-                        let key = first_char_upper(&value, '?');
-                        let path_str = path.to_string_lossy().to_string();
-                        self.status_message = format!("Registered: [{}] {}", key, name);
-                        self.config.registered_dirs.push(
-                            crate::config::RegisteredDir {
-                                key,
-                                name,
-                                path: path_str,
-                            },
-                        );
-                        self.config.save();
-                    }
-                    InputAction::EditRegisteredDirKey(idx) => {
-                        let new_key = first_char_upper(&value, '?');
-                        if idx < self.config.registered_dirs.len() {
-                            let name = self.config.registered_dirs[idx].name.clone();
-                            self.config.registered_dirs[idx].key = new_key.clone();
-                            self.config.save();
-                            self.status_message =
-                                format!("Changed key for \"{}\": [{}]", name, new_key);
-                        }
-                    }
-                    InputAction::ZipCompress(sources) => {
-                        let dest = self.inactive_panel().current_dir.clone();
-                        self.start_background_op(ctx, OpKind::ZipCompress {
-                            sources,
-                            dest_dir: dest,
-                            zip_name: value,
-                        });
-                    }
-                }
-            }
-            DialogResult::DriveSelected(drive) => {
-                let path = self.resolve_drive_path(&drive);
-                if path.exists() {
-                    self.active_panel_mut().navigate_to(path);
-                    self.save_config();
-                }
-            }
-            DialogResult::RegisteredDirSelected(path_str) => {
-                let path = PathBuf::from(&path_str);
-                if path.exists() {
-                    self.active_panel_mut().navigate_to(path);
-                    self.save_config();
-                    self.status_message = format!("Jumped to {}", path_str);
-                } else {
-                    self.status_message = format!("Directory not found: {}", path_str);
-                }
-            }
-            DialogResult::RegisteredDirDeleted(idx) => {
-                if idx < self.config.registered_dirs.len() {
-                    let removed = self.config.registered_dirs.remove(idx);
-                    self.config.save();
-                    self.status_message = format!("Unregistered: {}", removed.name);
-                }
-            }
-            DialogResult::RegisteredDirEditKey(idx) => {
-                if idx < self.config.registered_dirs.len() {
-                    let current_key = self.config.registered_dirs[idx].key.clone();
-                    self.dialog.input = Some(InputDialog {
-                        title: format!(
-                            "Change Key for \"{}\"",
-                            self.config.registered_dirs[idx].name
-                        ),
-                        value: current_key,
-                        action: InputAction::EditRegisteredDirKey(idx),
-                    });
-                }
-            }
-            DialogResult::ProgressFinished => {
-                if let Some(progress_dialog) = self.dialog.progress.take() {
-                    let state = progress_dialog.handle.state.lock().ok();
-                    let (result_message, succeeded_paths, result_path) = match &state {
-                        Some(s) => (
-                            s.result_message.clone(),
-                            s.succeeded_paths.clone(),
-                            s.result_path.clone(),
-                        ),
-                        None => ("Operation failed (mutex poisoned)".to_string(), Vec::new(), None),
-                    };
-                    drop(state);
-
-                    self.status_message = result_message;
-
-                    if !succeeded_paths.is_empty() {
-                        match &progress_dialog.op_kind {
-                            OpKind::Copy { dest_dir, .. } => {
-                                let created: Vec<PathBuf> = succeeded_paths.iter()
-                                    .filter_map(|s| s.file_name().map(|n| dest_dir.join(n)))
-                                    .collect();
-                                self.undo_history.push(FileOperation::Copy {
-                                    sources: succeeded_paths,
-                                    dest_dir: dest_dir.clone(),
-                                    created,
-                                });
-                            }
-                            OpKind::Move { dest_dir, .. } => {
-                                let moves: Vec<(PathBuf, PathBuf)> = succeeded_paths.iter()
-                                    .filter_map(|s| s.file_name().map(|n| (s.clone(), dest_dir.join(n))))
-                                    .collect();
-                                self.undo_history.push(FileOperation::Move { moves });
-                            }
-                            OpKind::Delete { .. } => {
-                                self.undo_history.push(FileOperation::Delete {
-                                    paths: succeeded_paths,
-                                });
-                            }
-                            OpKind::DeletePermanent { .. } => {
-                                // No undo for permanent delete
-                            }
-                            OpKind::ZipCompress { .. } => {
-                                if let Some(zip_path) = result_path {
-                                    self.undo_history.push(FileOperation::Compress {
-                                        sources: succeeded_paths,
-                                        zip_path,
-                                    });
-                                }
-                            }
-                            OpKind::ZipDecompress { zip_path, .. } => {
-                                if let Some(extracted_dir) = result_path {
-                                    self.undo_history.push(FileOperation::Decompress {
-                                        zip_path: zip_path.clone(),
-                                        extracted_dir,
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    self.left_panel.refresh();
-                    self.right_panel.refresh();
-                    self.active_panel_mut().deselect_all();
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 impl eframe::App for F2App {
@@ -1062,7 +378,7 @@ impl eframe::App for F2App {
         ctx.set_visuals(egui::Visuals::dark());
 
         // Handle keyboard input
-        self.handle_keyboard(ctx);
+        crate::keyboard::handle_keyboard(self, ctx);
 
         // Poll background image loading
         if self.preview_mode {
@@ -1073,7 +389,7 @@ impl eframe::App for F2App {
 
         // Handle dialog results
         let result = show_dialogs(ctx, &mut self.dialog);
-        self.handle_dialog_result(ctx, result);
+        crate::dialog_handler::handle_dialog_result(self, ctx, result);
 
 
 
@@ -1366,7 +682,7 @@ fn restore_dir(saved: &Option<String>) -> Option<PathBuf> {
     })
 }
 
-fn first_char_upper(s: &str, fallback: char) -> String {
+pub(crate) fn first_char_upper(s: &str, fallback: char) -> String {
     s.chars()
         .next()
         .unwrap_or(fallback)
@@ -1484,167 +800,6 @@ mod tests {
         let saved = Some(dir.to_string_lossy().to_string());
         assert_eq!(restore_dir(&saved), Some(dir));
     }
-}
-
-#[cfg(windows)]
-fn show_file_properties(path: &std::path::Path) {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_INVOKEIDLIST};
-
-    let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-    let verb: Vec<u16> = "properties\0".encode_utf16().collect();
-
-    let mut sei = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_INVOKEIDLIST,
-        lpVerb: PCWSTR(verb.as_ptr()),
-        lpFile: PCWSTR(path_wide.as_ptr()),
-        ..Default::default()
-    };
-
-    unsafe {
-        let _ = ShellExecuteExW(&mut sei);
-    }
-}
-
-#[cfg(windows)]
-fn show_context_menu(path: &std::path::Path) {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::*;
-    use windows::Win32::System::Com::*;
-    use windows::Win32::UI::Shell::Common::*;
-    use windows::Win32::UI::Shell::*;
-    use windows::Win32::UI::WindowsAndMessaging::*;
-
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-
-        let path_wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        if SHParseDisplayName(PCWSTR(path_wide.as_ptr()), None, &mut pidl, 0, None).is_err() {
-            return;
-        }
-
-        let mut child_pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        let folder: IShellFolder =
-            match SHBindToParent(pidl, Some(&mut child_pidl as *mut *mut _ as *mut *mut _)) {
-                Ok(f) => f,
-                Err(_) => {
-                    CoTaskMemFree(Some(pidl as _));
-                    return;
-                }
-            };
-
-        let child_pidl = child_pidl as *const ITEMIDLIST;
-        let ctx_menu: IContextMenu = match folder.GetUIObjectOf(
-            windows::Win32::Foundation::HWND::default(),
-            &[child_pidl],
-            None,
-        ) {
-            Ok(m) => m,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as _));
-                return;
-            }
-        };
-
-        let hmenu = match CreatePopupMenu() {
-            Ok(m) => m,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as _));
-                return;
-            }
-        };
-
-        let first_cmd: u32 = 1;
-        if ctx_menu
-            .QueryContextMenu(hmenu, 0, first_cmd, 0x7FFF, CMF_NORMAL)
-            .is_err()
-        {
-            let _ = DestroyMenu(hmenu);
-            CoTaskMemFree(Some(pidl as _));
-            return;
-        }
-
-        let hwnd = GetForegroundWindow();
-        let mut pt = windows::Win32::Foundation::POINT::default();
-        let _ = GetCursorPos(&mut pt);
-        let _ = SetForegroundWindow(hwnd);
-
-        let cmd = TrackPopupMenuEx(
-            hmenu,
-            TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0,
-            pt.x,
-            pt.y,
-            hwnd,
-            None,
-        );
-
-        if cmd.0 != 0 {
-            let verb = (cmd.0 as u32).wrapping_sub(first_cmd) as usize;
-            let info = CMINVOKECOMMANDINFO {
-                cbSize: std::mem::size_of::<CMINVOKECOMMANDINFO>() as u32,
-                hwnd,
-                lpVerb: windows::core::PCSTR(verb as *const u8),
-                nShow: 1,
-                ..Default::default()
-            };
-            let _ = ctx_menu.InvokeCommand(&info);
-        }
-
-        let _ = DestroyMenu(hmenu);
-        CoTaskMemFree(Some(pidl as _));
-    }
-}
-
-struct KeyState {
-    tab: bool,
-    j: bool,
-    k: bool,
-    h: bool,
-    l: bool,
-    up: bool,
-    down: bool,
-    space: bool,
-    insert: bool,
-    home: bool,
-    end: bool,
-    page_up: bool,
-    page_down: bool,
-    c: bool,
-    m: bool,
-    d: bool,
-    r: bool,
-    n: bool,
-    o: bool,
-    a: bool,
-    ctrl_r: bool,
-    q: bool,
-    ctrl_q: bool,
-    period: bool,
-    colon: bool,
-    question: bool,
-    p: bool,
-    f: bool,
-    v: bool,
-    enter: bool,
-    g: bool,
-    shift_g: bool,
-    u: bool,
-    shift_u: bool,
-    shift_d: bool,
-    z: bool,
-    shift_z: bool,
-    y: bool,
-    shift_x: bool,
-    alt_enter: bool,
-    backslash: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {

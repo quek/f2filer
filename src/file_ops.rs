@@ -345,43 +345,56 @@ impl ProgressHandle {
     }
 }
 
+fn run_batch_with_progress<F>(
+    paths: &[PathBuf],
+    progress: &ProgressHandle,
+    verb: &str,
+    mut op: F,
+) where
+    F: FnMut(&Path) -> Result<(), FileOpError>,
+{
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, path) in paths.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&name, i);
+
+        match op(path) {
+            Ok(()) => succeeded.push(path.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+
+    let count = succeeded.len();
+    let total = paths.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("{} {} item(s)", verb, total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
+}
+
 pub fn copy_batch_with_progress(
     sources: &[PathBuf],
     dest_dir: &Path,
     overwrite: bool,
     progress: &ProgressHandle,
 ) {
-    let mut succeeded = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, src) in sources.iter().enumerate() {
-        if progress.is_cancelled() {
-            break;
-        }
-        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        progress.update(&name, i);
-
-        let result = if overwrite {
-            copy_file_or_dir_overwrite(src, dest_dir)
+    let dest = dest_dir.to_path_buf();
+    run_batch_with_progress(sources, progress, "Copied", |src| {
+        if overwrite {
+            copy_file_or_dir_overwrite(src, &dest)
         } else {
-            copy_file_or_dir(src, dest_dir)
-        };
-        match result {
-            Ok(()) => succeeded.push(src.clone()),
-            Err(e) => errors.push(e.to_string()),
+            copy_file_or_dir(src, &dest)
         }
-    }
-
-    let count = succeeded.len();
-    let total = sources.len();
-    let msg = if progress.is_cancelled() {
-        format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
-        format!("Copied {} item(s)", total)
-    } else {
-        format!("Errors: {}", errors.join(", "))
-    };
-    progress.finish(msg, succeeded, errors.first().cloned(), None);
+    });
 }
 
 pub fn move_batch_with_progress(
@@ -390,101 +403,28 @@ pub fn move_batch_with_progress(
     overwrite: bool,
     progress: &ProgressHandle,
 ) {
-    let mut succeeded = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, src) in sources.iter().enumerate() {
-        if progress.is_cancelled() {
-            break;
-        }
-        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        progress.update(&name, i);
-
-        let result = if overwrite {
-            move_file_or_dir_overwrite(src, dest_dir)
+    let dest = dest_dir.to_path_buf();
+    run_batch_with_progress(sources, progress, "Moved", |src| {
+        if overwrite {
+            move_file_or_dir_overwrite(src, &dest)
         } else {
-            move_file_or_dir(src, dest_dir)
-        };
-        match result {
-            Ok(()) => succeeded.push(src.clone()),
-            Err(e) => errors.push(e.to_string()),
+            move_file_or_dir(src, &dest)
         }
-    }
-
-    let count = succeeded.len();
-    let total = sources.len();
-    let msg = if progress.is_cancelled() {
-        format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
-        format!("Moved {} item(s)", total)
-    } else {
-        format!("Errors: {}", errors.join(", "))
-    };
-    progress.finish(msg, succeeded, errors.first().cloned(), None);
+    });
 }
 
 pub fn delete_batch_with_progress(
     paths: &[PathBuf],
     progress: &ProgressHandle,
 ) {
-    let mut succeeded = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, path) in paths.iter().enumerate() {
-        if progress.is_cancelled() {
-            break;
-        }
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        progress.update(&name, i);
-
-        match delete_to_trash(path) {
-            Ok(()) => succeeded.push(path.clone()),
-            Err(e) => errors.push(e.to_string()),
-        }
-    }
-
-    let count = succeeded.len();
-    let total = paths.len();
-    let msg = if progress.is_cancelled() {
-        format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
-        format!("Deleted {} item(s)", total)
-    } else {
-        format!("Errors: {}", errors.join(", "))
-    };
-    progress.finish(msg, succeeded, errors.first().cloned(), None);
+    run_batch_with_progress(paths, progress, "Deleted", |p| delete_to_trash(p));
 }
 
 pub fn delete_permanent_batch_with_progress(
     paths: &[PathBuf],
     progress: &ProgressHandle,
 ) {
-    let mut succeeded = Vec::new();
-    let mut errors = Vec::new();
-
-    for (i, path) in paths.iter().enumerate() {
-        if progress.is_cancelled() {
-            break;
-        }
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        progress.update(&name, i);
-
-        match delete_permanently(path) {
-            Ok(()) => succeeded.push(path.clone()),
-            Err(e) => errors.push(e.to_string()),
-        }
-    }
-
-    let count = succeeded.len();
-    let total = paths.len();
-    let msg = if progress.is_cancelled() {
-        format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
-        format!("Permanently deleted {} item(s)", total)
-    } else {
-        format!("Errors: {}", errors.join(", "))
-    };
-    progress.finish(msg, succeeded, errors.first().cloned(), None);
+    run_batch_with_progress(paths, progress, "Permanently deleted", |p| delete_permanently(p));
 }
 
 pub fn compress_to_zip_with_progress(
