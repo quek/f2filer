@@ -30,7 +30,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - フィルターにフォーカス中はキーボードショートカットを無効化（`filter_has_focus` フラグ）
 - フィルター入力中はマッチするファイルにカーソル自動移動（`..` はスキップ）
 - フィルターのEnter検出は `response.lost_focus()` を使用（egui の singleline TextEdit は Enter で自動的にフォーカスを手放すため `has_focus()` は使えない）
-- `?`キーの検出はテキストイベント (`egui::Event::Text`) を使用（Shift+Slashはキーボード配列依存）
+- `?`キー・`:`キーの検出はテキストイベント (`egui::Event::Text`) を使用（`key_pressed` は Shift 組み合わせで不安定）
 - ドライブ選択はドライブレターキーで直接選択
 - ドライブ切替時は前回そのドライブで最後にいたディレクトリを復元
 - 画像プレビューは反対パネルに表示し、カーソル移動に追従
