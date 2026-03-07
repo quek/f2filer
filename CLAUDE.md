@@ -46,6 +46,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 
 ## Coding Principles
 
+### ベストプラクティスを追求する
+- 最新のベストプラクティスでの実装を行なう
+
 ### KISS (Keep It Simple, Stupid)
 - 最小限の実装で目的を達成する
 - 不要な抽象化やラッパーを作らない

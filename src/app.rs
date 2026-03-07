@@ -326,6 +326,7 @@ impl F2App {
                 z: i.key_pressed(egui::Key::Z) && !i.modifiers.shift && !i.modifiers.ctrl,
                 shift_z: i.key_pressed(egui::Key::Z) && i.modifiers.shift,
                 y: i.key_pressed(egui::Key::Y) && !i.modifiers.shift && !i.modifiers.ctrl,
+                shift_x: i.key_pressed(egui::Key::X) && i.modifiers.shift,
             }
         });
 
@@ -522,6 +523,13 @@ impl F2App {
             }
         }
 
+        // Shift+X: open recycle bin
+        if input.shift_x {
+            let _ = std::process::Command::new("explorer.exe")
+                .arg("shell:RecycleBinFolder")
+                .spawn();
+        }
+
         // r: rename
         if input.r {
             if let Some(entry) = self.active_panel().current_entry() {
@@ -588,6 +596,7 @@ c              :  Copy selected → opposite
 m              :  Move selected → opposite
 d              :  Delete selected (trash)
 Shift+D        :  Permanent delete (no undo)
+Shift+X        :  Open recycle bin
 r              :  Rename
 n              :  New directory
 p              :  Drive select
@@ -1441,6 +1450,7 @@ struct KeyState {
     z: bool,
     shift_z: bool,
     y: bool,
+    shift_x: bool,
 }
 
 fn setup_fonts(ctx: &egui::Context) {
