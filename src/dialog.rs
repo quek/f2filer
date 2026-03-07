@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::config::RegisteredDir;
+use crate::file_ops;
 
 #[derive(Default)]
 pub struct DialogState {
@@ -9,6 +10,7 @@ pub struct DialogState {
     pub message: Option<MessageDialog>,
     pub drive: Option<DriveDialog>,
     pub registered_dir: Option<RegisteredDirDialog>,
+    pub progress: Option<ProgressDialog>,
 }
 
 impl DialogState {
@@ -18,7 +20,23 @@ impl DialogState {
             || self.message.is_some()
             || self.drive.is_some()
             || self.registered_dir.is_some()
+            || self.progress.is_some()
     }
+}
+
+#[derive(Clone)]
+pub enum OpKind {
+    Copy { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, overwrite: bool },
+    Move { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, overwrite: bool },
+    Delete { paths: Vec<std::path::PathBuf> },
+    DeletePermanent { paths: Vec<std::path::PathBuf> },
+    ZipCompress { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, zip_name: String },
+    ZipDecompress { zip_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
+}
+
+pub struct ProgressDialog {
+    pub handle: file_ops::ProgressHandle,
+    pub op_kind: OpKind,
 }
 
 pub struct ConfirmDialog {
@@ -82,6 +100,7 @@ pub enum DialogResult {
     RegisteredDirSelected(String),
     RegisteredDirDeleted(usize),
     RegisteredDirEditKey(usize),
+    ProgressFinished,
     Closed,
 }
 
@@ -302,6 +321,58 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
     }
 
+    // Progress dialog
+    if let Some(progress) = &state.progress {
+        let (op_label, current_file, completed, total, finished) = {
+            match progress.handle.state.lock() {
+                Ok(s) => (
+                    s.op_label.clone(),
+                    s.current_file.clone(),
+                    s.completed,
+                    s.total,
+                    s.finished,
+                ),
+                Err(_) => {
+                    // Mutex poisoned — treat as finished with error
+                    result = DialogResult::ProgressFinished;
+                    ("Error".to_string(), String::new(), 0, 0, true)
+                }
+            }
+        };
+
+        if finished {
+            result = DialogResult::ProgressFinished;
+        } else {
+            egui::Window::new(&op_label)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.set_min_width(300.0);
+                    ui.label(format!("{} / {}", completed, total));
+                    if !current_file.is_empty() {
+                        ui.label(&current_file);
+                    }
+                    let fraction = if total > 0 {
+                        completed as f32 / total as f32
+                    } else {
+                        0.0
+                    };
+                    ui.add(egui::ProgressBar::new(fraction).show_percentage());
+                    ui.add_space(8.0);
+                    if ui.button("Cancel (Esc)").clicked() {
+                        progress.handle.cancel();
+                    }
+                });
+
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                progress.handle.cancel();
+            }
+
+            ctx.request_repaint();
+        }
+    }
+
     // Clean up closed dialogs
     match &result {
         DialogResult::ConfirmYes(_)
@@ -329,6 +400,9 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
         DialogResult::InputOk(_, _) => {
             state.input = None;
+        }
+        DialogResult::ProgressFinished => {
+            // Don't clear here — handle_dialog_result takes it via .take()
         }
         DialogResult::None => {}
     }

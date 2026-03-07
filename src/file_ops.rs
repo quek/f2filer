@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub enum FileOpError {
@@ -256,6 +258,393 @@ fn validate_name(name: &str) -> Result<(), FileOpError> {
         )));
     }
     Ok(())
+}
+
+// --- Progress tracking for background file operations ---
+
+#[derive(Clone)]
+pub struct ProgressHandle {
+    pub state: Arc<Mutex<ProgressState>>,
+    pub cancel_flag: Arc<AtomicBool>,
+}
+
+pub struct ProgressState {
+    pub op_label: String,
+    pub current_file: String,
+    pub completed: usize,
+    pub total: usize,
+    pub finished: bool,
+    pub cancelled: bool,
+    pub error: Option<String>,
+    pub result_message: String,
+    pub succeeded_paths: Vec<PathBuf>,
+    pub result_path: Option<PathBuf>,
+}
+
+impl ProgressHandle {
+    pub fn new(op_label: &str, total: usize) -> Self {
+        ProgressHandle {
+            state: Arc::new(Mutex::new(ProgressState {
+                op_label: op_label.to_string(),
+                current_file: String::new(),
+                completed: 0,
+                total,
+                finished: false,
+                cancelled: false,
+                error: None,
+                result_message: String::new(),
+                succeeded_paths: Vec::new(),
+                result_path: None,
+            })),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag.load(Ordering::Relaxed)
+    }
+
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, Ordering::Relaxed);
+    }
+
+    fn update(&self, current_file: &str, completed: usize) {
+        if let Ok(mut s) = self.state.lock() {
+            s.current_file = current_file.to_string();
+            s.completed = completed;
+        }
+    }
+
+    fn finish(&self, message: String, succeeded: Vec<PathBuf>, error: Option<String>, result_path: Option<PathBuf>) {
+        if let Ok(mut s) = self.state.lock() {
+            s.finished = true;
+            s.cancelled = self.is_cancelled();
+            s.result_message = message;
+            s.succeeded_paths = succeeded;
+            s.error = error;
+            s.result_path = result_path;
+        }
+    }
+}
+
+pub fn copy_batch_with_progress(
+    sources: &[PathBuf],
+    dest_dir: &Path,
+    overwrite: bool,
+    progress: &ProgressHandle,
+) {
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, src) in sources.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&name, i);
+
+        let result = if overwrite {
+            copy_file_or_dir_overwrite(src, dest_dir)
+        } else {
+            copy_file_or_dir(src, dest_dir)
+        };
+        match result {
+            Ok(()) => succeeded.push(src.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+
+    let count = succeeded.len();
+    let total = sources.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("Copied {} item(s)", total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
+}
+
+pub fn move_batch_with_progress(
+    sources: &[PathBuf],
+    dest_dir: &Path,
+    overwrite: bool,
+    progress: &ProgressHandle,
+) {
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, src) in sources.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&name, i);
+
+        let result = if overwrite {
+            move_file_or_dir_overwrite(src, dest_dir)
+        } else {
+            move_file_or_dir(src, dest_dir)
+        };
+        match result {
+            Ok(()) => succeeded.push(src.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+
+    let count = succeeded.len();
+    let total = sources.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("Moved {} item(s)", total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
+}
+
+pub fn delete_batch_with_progress(
+    paths: &[PathBuf],
+    progress: &ProgressHandle,
+) {
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, path) in paths.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&name, i);
+
+        match delete_to_trash(path) {
+            Ok(()) => succeeded.push(path.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+
+    let count = succeeded.len();
+    let total = paths.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("Deleted {} item(s)", total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
+}
+
+pub fn delete_permanent_batch_with_progress(
+    paths: &[PathBuf],
+    progress: &ProgressHandle,
+) {
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+
+    for (i, path) in paths.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&name, i);
+
+        match delete_permanently(path) {
+            Ok(()) => succeeded.push(path.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+
+    let count = succeeded.len();
+    let total = paths.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("Permanently deleted {} item(s)", total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
+}
+
+pub fn compress_to_zip_with_progress(
+    sources: &[PathBuf],
+    dest_dir: &Path,
+    zip_name: &str,
+    progress: &ProgressHandle,
+) {
+    let name = if zip_name.ends_with(".zip") {
+        zip_name.to_string()
+    } else {
+        format!("{}.zip", zip_name)
+    };
+    if let Err(e) = validate_name(&name) {
+        progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+        return;
+    }
+    let zip_path = dest_dir.join(&name);
+
+    let file = match fs::File::create(&zip_path) {
+        Ok(f) => f,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let mut errors = Vec::new();
+    for (i, src) in sources.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
+        }
+        let src_name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        progress.update(&src_name, i);
+
+        let result = if src.is_dir() {
+            add_dir_to_zip(&mut zip, src, src.file_name().unwrap().as_ref(), options)
+        } else {
+            add_file_to_zip(&mut zip, src, &src_name, options)
+        };
+        if let Err(e) = result {
+            errors.push(e.to_string());
+        }
+    }
+
+    if progress.is_cancelled() {
+        // Drop zip writer before removing file
+        let _ = zip.finish();
+        let _ = fs::remove_file(&zip_path);
+        progress.finish(
+            format!("Cancelled ({}/{})", sources.len().min(progress.state.lock().map(|s| s.completed).unwrap_or(0)), sources.len()),
+            Vec::new(),
+            None,
+            None,
+        );
+        return;
+    }
+
+    match zip.finish() {
+        Ok(_) => {
+            let msg = if errors.is_empty() {
+                format!("Compressed {} file(s) to {}", sources.len(), name)
+            } else {
+                format!("Errors: {}", errors.join(", "))
+            };
+            progress.finish(msg, sources.to_vec(), errors.first().cloned(), Some(zip_path));
+        }
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+        }
+    }
+}
+
+pub fn decompress_zip_with_progress(
+    zip_path: &Path,
+    dest_dir: &Path,
+    progress: &ProgressHandle,
+) {
+    let zip_stem = match zip_path.file_stem() {
+        Some(s) => s.to_owned(),
+        None => {
+            progress.finish("Error: No file name".to_string(), Vec::new(), Some("No file name".to_string()), None);
+            return;
+        }
+    };
+    let extract_dir = dest_dir.join(&zip_stem);
+    if let Err(e) = fs::create_dir_all(&extract_dir) {
+        progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+        return;
+    }
+
+    let file = match fs::File::open(zip_path) {
+        Ok(f) => f,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+
+    // Update total to number of entries in zip
+    if let Ok(mut s) = progress.state.lock() {
+        s.total = archive.len();
+    }
+
+    let mut errors = Vec::new();
+    for i in 0..archive.len() {
+        if progress.is_cancelled() {
+            break;
+        }
+
+        let mut entry = match archive.by_index(i) {
+            Ok(e) => e,
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            }
+        };
+
+        let entry_name = entry.enclosed_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        progress.update(&entry_name, i);
+
+        let out_path = match entry.enclosed_name() {
+            Some(name) => extract_dir.join(name),
+            None => {
+                errors.push("Invalid zip entry name".to_string());
+                continue;
+            }
+        };
+
+        if entry.is_dir() {
+            if let Err(e) = fs::create_dir_all(&out_path) {
+                errors.push(e.to_string());
+            }
+        } else {
+            if let Some(parent) = out_path.parent() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    errors.push(e.to_string());
+                    continue;
+                }
+            }
+            match fs::File::create(&out_path) {
+                Ok(mut outfile) => {
+                    if let Err(e) = std::io::copy(&mut entry, &mut outfile) {
+                        errors.push(e.to_string());
+                    }
+                }
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+    }
+
+    let total = archive.len();
+    let completed = if progress.is_cancelled() {
+        progress.state.lock().map(|s| s.completed).unwrap_or(0)
+    } else {
+        total
+    };
+
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", completed, total)
+    } else if errors.is_empty() {
+        format!("Extracted to: {}", extract_dir.display())
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, vec![zip_path.to_path_buf()], errors.first().cloned(), Some(extract_dir));
 }
 
 #[cfg(windows)]
