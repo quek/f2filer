@@ -38,6 +38,7 @@ pub struct F2App {
     window_pos: Option<egui::Pos2>,
     window_size: Option<egui::Vec2>,
     undo_history: UndoHistory,
+    skip_next_drop: bool,
 }
 
 impl F2App {
@@ -71,6 +72,7 @@ impl F2App {
             window_size: None,
             config,
             undo_history: UndoHistory::new(),
+            skip_next_drop: false,
         }
     }
 
@@ -714,6 +716,11 @@ PgUp / PgDn    :  Page scroll
             return;
         }
 
+        if self.skip_next_drop {
+            self.skip_next_drop = false;
+            return;
+        }
+
         let dest_panel = if is_left_half {
             &mut self.left_panel
         } else {
@@ -1114,6 +1121,16 @@ impl eframe::App for F2App {
                     });
             });
 
+            // Click on inactive panel → switch active panel
+            if left_panel.clicked {
+                left_panel.clicked = false;
+                self.active = ActivePanel::Left;
+            }
+            if right_panel.clicked {
+                right_panel.clicked = false;
+                self.active = ActivePanel::Right;
+            }
+
             // Handle outbound drag (App → External)
             #[cfg(windows)]
             {
@@ -1123,6 +1140,9 @@ impl eframe::App for F2App {
                     .or_else(|| right_panel.drag_request.take());
                 if let Some(paths) = drag_paths {
                     let was_move = crate::drag_drop::start_drag(&paths);
+                    // After OLE drag completes, ignore the next drop event
+                    // (it may be the same files dropped back onto this window)
+                    self.skip_next_drop = true;
                     if was_move {
                         left_panel.refresh();
                         right_panel.refresh();

@@ -102,6 +102,7 @@ pub struct FilePanel {
     pub filter_has_focus: bool,
     pub drag_request: Option<Vec<PathBuf>>,
     pub drop_highlight: bool,
+    pub clicked: bool,
 }
 
 impl FilePanel {
@@ -120,6 +121,7 @@ impl FilePanel {
             filter_has_focus: false,
             drag_request: None,
             drop_highlight: false,
+            clicked: false,
         };
         panel.refresh();
         panel
@@ -541,8 +543,14 @@ impl FilePanel {
                         text_color,
                     );
 
-                    // Advance layout (Sense::drag for outbound drag-and-drop)
-                    let response = ui.allocate_rect(row_rect, egui::Sense::drag());
+                    // Advance layout (click to move cursor, drag for OLE drag-and-drop)
+                    let response = ui.allocate_rect(row_rect, egui::Sense::click_and_drag());
+
+                    // Click → move cursor to this row
+                    if response.clicked() {
+                        self.cursor = vis_idx;
+                        self.clicked = true;
+                    }
 
                     // Detect drag start → collect paths for OLE drag
                     if response.drag_started() {
