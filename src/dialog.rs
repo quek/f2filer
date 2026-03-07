@@ -84,7 +84,9 @@ pub struct MessageDialog {
 }
 
 pub struct DriveDialog {
-    pub drives: Vec<String>,
+    /// (drive_name, space_label) e.g. ("C:", "120.5G / 500.0G")
+    pub drives: Vec<(String, String)>,
+    pub cursor: usize,
 }
 
 pub struct RegisteredDirDialog {
@@ -234,7 +236,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     }
 
     // Drive dialog
-    if let Some(dialog) = &state.drive {
+    if let Some(dialog) = &mut state.drive {
         let drives = dialog.drives.clone();
         let mut open = true;
 
@@ -244,20 +246,53 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for drive in drives.iter() {
-                        if ui.button(drive).clicked() {
-                            result = DialogResult::DriveSelected(drive.clone());
+                for (i, (name, space)) in drives.iter().enumerate() {
+                    let is_cursor = i == dialog.cursor;
+                    ui.horizontal(|ui| {
+                        let btn_text = if is_cursor {
+                            egui::RichText::new(name).color(egui::Color32::from_rgb(100, 180, 255)).strong()
+                        } else {
+                            egui::RichText::new(name)
+                        };
+                        if ui.button(btn_text).clicked() {
+                            result = DialogResult::DriveSelected(name.clone());
                         }
-                    }
-                });
+                        if !space.is_empty() {
+                            let space_text = if is_cursor {
+                                egui::RichText::new(space).color(egui::Color32::from_rgb(100, 180, 255))
+                            } else {
+                                egui::RichText::new(space)
+                            };
+                            ui.label(space_text);
+                        }
+                    });
+                }
             });
 
+        // j/k cursor navigation
+        if !drives.is_empty() {
+            if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+                dialog.cursor = (dialog.cursor + 1) % drives.len();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+                dialog.cursor = (dialog.cursor + drives.len() - 1) % drives.len();
+            }
+            // Space or Enter to select cursor
+            if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
+                if let Some((name, _)) = drives.get(dialog.cursor) {
+                    result = DialogResult::DriveSelected(name.clone());
+                }
+            }
+        }
+
         // Drive letter key shortcuts (e.g. press 'c' for "C:")
+        // Exclude J/K (used for cursor navigation)
         if let Some(letter) = pressed_letter_key(ctx) {
-            let drive_name = format!("{}:", letter);
-            if drives.iter().any(|d| d == &drive_name) {
-                result = DialogResult::DriveSelected(drive_name);
+            if letter != 'J' && letter != 'K' {
+                let drive_name = format!("{}:", letter);
+                if drives.iter().any(|(n, _)| n == &drive_name) {
+                    result = DialogResult::DriveSelected(drive_name);
+                }
             }
         }
 

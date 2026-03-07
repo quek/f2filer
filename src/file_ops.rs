@@ -649,6 +649,57 @@ pub fn get_drives() -> Vec<String> {
     vec!["/".to_string()]
 }
 
+/// Returns (free_bytes, total_bytes) for a drive path, or None on failure.
+#[cfg(windows)]
+pub fn get_drive_space(root: &str) -> Option<(u64, u64)> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+
+    let wide: Vec<u16> = OsStr::new(root).encode_wide().chain(std::iter::once(0)).collect();
+    let mut free_caller: u64 = 0;
+    let mut total: u64 = 0;
+    let mut _free_total: u64 = 0;
+
+    let ret = unsafe {
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_caller, &mut total, &mut _free_total)
+    };
+    if ret != 0 {
+        Some((free_caller, total))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_drive_space(_root: &str) -> Option<(u64, u64)> {
+    None
+}
+
+pub fn format_size_human(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+    if bytes >= TB {
+        format!("{:.1}T", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.1}G", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.0}M", bytes as f64 / MB as f64)
+    } else {
+        format!("{:.0}K", bytes as f64 / KB as f64)
+    }
+}
+
 pub fn compress_to_zip(
     sources: &[PathBuf],
     dest_dir: &Path,

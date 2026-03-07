@@ -578,9 +578,28 @@ PgUp / PgDn    :  Page scroll
 
     // p: drive selection
     if input.p {
-        app.dialog.drive = Some(DriveDialog {
-            drives: app.drives.clone(),
-        });
+        use crate::file_ops::{get_drive_space, format_size_human};
+        let drives = app.drives.iter().map(|name| {
+            let root = if name.contains(':') && !name.starts_with("WSL:") {
+                format!("{}\\", name)
+            } else {
+                String::new()
+            };
+            let space = if !root.is_empty() {
+                get_drive_space(&root).map(|(free, total)| {
+                    let used_pct = if total > 0 {
+                        ((total - free) as f64 / total as f64 * 100.0) as u64
+                    } else {
+                        0
+                    };
+                    format!("{} / {} ({}%)", format_size_human(free), format_size_human(total), used_pct)
+                }).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            (name.clone(), space)
+        }).collect();
+        app.dialog.drive = Some(DriveDialog { drives, cursor: 0 });
     }
 
     // g: registered directories
