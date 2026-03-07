@@ -327,7 +327,7 @@ impl F2App {
                 q: i.key_pressed(egui::Key::Q) && !i.modifiers.ctrl,
                 ctrl_q: i.key_pressed(egui::Key::Q) && i.modifiers.ctrl,
                 period: i.key_pressed(egui::Key::Period) && i.modifiers.ctrl,
-                colon: i.key_pressed(egui::Key::Semicolon),
+                colon: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == ":")),
                 question: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "?")),
                 p: i.key_pressed(egui::Key::P),
                 f: i.key_pressed(egui::Key::F),
