@@ -207,7 +207,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
         if let Some(entry) = app.active_panel().current_entry().cloned() {
             if entry.is_dir {
                 let dir = entry.path.clone();
-                app.active_panel_mut().navigate_to(dir);
+                app.active_panel_mut().navigate_to(dir, ctx);
                 app.save_config();
             } else {
                 open::that(&entry.path).ok();
@@ -227,7 +227,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
     // h: parent directory
     if input.h {
         if let Some(parent) = app.active_panel().current_dir.parent().map(|p| p.to_path_buf()) {
-            app.active_panel_mut().navigate_to(parent);
+            app.active_panel_mut().navigate_to(parent, ctx);
             app.save_config();
         }
     }
@@ -511,7 +511,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, input: &KeyState) {
     // o: sync opposite panel to current directory
     if input.o {
         let dir = app.active_panel().current_dir.clone();
-        app.inactive_panel_mut().navigate_to(dir);
+        app.inactive_panel_mut().navigate_to(dir, ctx);
         app.status_message = "Synced opposite panel".to_string();
         app.save_config();
     }

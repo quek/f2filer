@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
@@ -105,6 +106,10 @@ pub struct FilePanel {
     pub clicked: bool,
     scroll_offset: f32,
     viewport_h: f32,
+    pub is_loading: bool,
+    loading_result: Arc<Mutex<Option<(u64, Vec<FileItem>)>>>,
+    loading_generation: u64,
+    loading_old_name: Option<String>,
 }
 
 impl FilePanel {
@@ -126,6 +131,10 @@ impl FilePanel {
             clicked: false,
             scroll_offset: 0.0,
             viewport_h: 0.0,
+            is_loading: false,
+            loading_result: Arc::new(Mutex::new(None)),
+            loading_generation: 0,
+            loading_old_name: None,
         };
         panel.refresh();
         panel
@@ -211,21 +220,55 @@ impl FilePanel {
         self.rebuild_filter();
     }
 
-    pub fn navigate_to(&mut self, dir: PathBuf) {
+    pub fn navigate_to(&mut self, dir: PathBuf, ctx: &egui::Context) {
         let old_dir_name = self.current_dir.file_name().map(|n| n.to_string_lossy().to_string());
-        self.current_dir = dir;
+        self.current_dir = dir.clone();
         self.cursor = 0;
         self.filter.clear();
-        self.refresh();
+        self.entries.clear();
+        self.filtered_indices.clear();
+        self.selected.clear();
+        self.is_loading = true;
+        self.loading_generation += 1;
+        self.loading_old_name = old_dir_name;
 
-        // If going up, try to position cursor on the directory we came from
-        if let Some(old_name) = old_dir_name {
-            for (i, idx) in self.filtered_indices.iter().enumerate() {
-                if self.entries[*idx].name == old_name {
-                    self.cursor = i;
-                    break;
+        let gen = self.loading_generation;
+        let result = Arc::clone(&self.loading_result);
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let entries = read_directory(&dir);
+            *result.lock().unwrap() = Some((gen, entries));
+            repaint_ctx.request_repaint();
+        });
+    }
+
+    /// Poll for async directory loading completion.
+    pub fn check_loading_complete(&mut self) {
+        if !self.is_loading {
+            return;
+        }
+        let data = self.loading_result.lock().unwrap().take();
+        if let Some((gen, entries)) = data {
+            if gen != self.loading_generation {
+                return; // stale result from a superseded navigation
+            }
+            self.entries = entries;
+            sort_entries(&mut self.entries, self.sort_key, self.sort_order);
+            self.rebuild_filter();
+            self.selected.clear();
+            if self.cursor >= self.visible_count() {
+                self.cursor = self.visible_count().saturating_sub(1);
+            }
+            // If going up, position cursor on the directory we came from
+            if let Some(old_name) = self.loading_old_name.take() {
+                for (i, idx) in self.filtered_indices.iter().enumerate() {
+                    if self.entries[*idx].name == old_name {
+                        self.cursor = i;
+                        break;
+                    }
                 }
             }
+            self.is_loading = false;
         }
     }
 
@@ -444,6 +487,16 @@ impl FilePanel {
         }
 
         ui.separator();
+
+        // Loading indicator
+        if self.is_loading {
+            let remaining = ui.available_height();
+            ui.add_space((remaining / 2.0 - 12.0).max(0.0));
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+            });
+            return;
+        }
 
         // File list
         let row_height = 17.0;

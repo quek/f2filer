@@ -388,6 +388,10 @@ impl eframe::App for F2App {
         // Handle keyboard input
         crate::keyboard::handle_keyboard(self, ctx);
 
+        // Check for async directory loading completion
+        self.left_panel.check_loading_complete();
+        self.right_panel.check_loading_complete();
+
         // Poll background image loading
         if self.preview_mode {
             if let Some(preview) = self.image_cache.poll_loaded(ctx) {
@@ -419,7 +423,7 @@ impl eframe::App for F2App {
                         self.command_line.clear();
                     }
                     if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.execute_command();
+                        self.execute_command(ctx);
                         self.command_mode = false;
                     }
                 });
@@ -577,7 +581,7 @@ impl eframe::App for F2App {
 }
 
 impl F2App {
-    fn execute_command(&mut self) {
+    fn execute_command(&mut self, ctx: &egui::Context) {
         let cmd = self.command_line.trim().to_string();
         match cmd.as_str() {
             "q" | "quit" => {
@@ -600,7 +604,7 @@ impl F2App {
                 let target = cmd[3..].trim();
                 let path = PathBuf::from(target);
                 if path.is_dir() {
-                    self.active_panel_mut().navigate_to(path);
+                    self.active_panel_mut().navigate_to(path, ctx);
                     self.save_config();
                 } else {
                     self.status_message = format!("Directory not found: {}", target);

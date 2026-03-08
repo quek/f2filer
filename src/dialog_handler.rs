@@ -119,14 +119,14 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
         DialogResult::DriveSelected(drive) => {
             let path = app.resolve_drive_path(&drive);
             if path.exists() {
-                app.active_panel_mut().navigate_to(path);
+                app.active_panel_mut().navigate_to(path, ctx);
                 app.save_config();
             }
         }
         DialogResult::RegisteredDirSelected(path_str) => {
             let path = PathBuf::from(&path_str);
             if path.exists() {
-                app.active_panel_mut().navigate_to(path);
+                app.active_panel_mut().navigate_to(path, ctx);
                 app.save_config();
                 app.status_message = format!("Jumped to {}", path_str);
             } else {
