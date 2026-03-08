@@ -5,6 +5,7 @@ Rust + egui 製の2画面ファイラー。
 ## スクリーンショット
 
 ![f2filer](docs/screenshot.png)
+![動画プレビュー](docs/screenshot-video.png)
 
 ## 特徴
 
