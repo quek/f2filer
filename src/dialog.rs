@@ -32,6 +32,7 @@ pub enum OpKind {
     DeletePermanent { paths: Vec<std::path::PathBuf> },
     ZipCompress { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, zip_name: String },
     ZipDecompress { zip_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
+    TarDecompress { tar_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
 }
 
 pub struct ProgressDialog {

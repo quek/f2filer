@@ -605,6 +605,127 @@ pub fn decompress_zip_with_progress(
     progress.finish(msg, vec![zip_path.to_path_buf()], errors.first().cloned(), Some(extract_dir));
 }
 
+pub fn decompress_tar_with_progress(
+    tar_path: &Path,
+    dest_dir: &Path,
+    progress: &ProgressHandle,
+) {
+    // Determine archive stem: strip .tar.gz / .tgz / .tar
+    let file_name = tar_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let stem = if file_name.to_lowercase().ends_with(".tar.gz") {
+        &file_name[..file_name.len() - 7]
+    } else if file_name.to_lowercase().ends_with(".tgz") {
+        &file_name[..file_name.len() - 4]
+    } else if file_name.to_lowercase().ends_with(".tar") {
+        &file_name[..file_name.len() - 4]
+    } else {
+        file_name
+    };
+
+    if stem.is_empty() {
+        progress.finish("Error: No file name".to_string(), Vec::new(), Some("No file name".to_string()), None);
+        return;
+    }
+
+    let extract_dir = dest_dir.join(stem);
+    if let Err(e) = fs::create_dir_all(&extract_dir) {
+        progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+        return;
+    }
+
+    let file = match fs::File::open(tar_path) {
+        Ok(f) => f,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+
+    // Detect if gzip-compressed by extension
+    let is_gzip = {
+        let lower = file_name.to_lowercase();
+        lower.ends_with(".tar.gz") || lower.ends_with(".tgz")
+    };
+
+    let mut archive = if is_gzip {
+        let decoder = flate2::read::GzDecoder::new(file);
+        tar::Archive::new(Box::new(decoder) as Box<dyn Read + Send>)
+    } else {
+        tar::Archive::new(Box::new(file) as Box<dyn Read + Send>)
+    };
+
+    let entries = match archive.entries() {
+        Ok(e) => e,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+
+    let mut errors = Vec::new();
+    let mut count: usize = 0;
+
+    for entry_result in entries {
+        if progress.is_cancelled() {
+            break;
+        }
+
+        let mut entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            }
+        };
+
+        let entry_path = match entry.path() {
+            Ok(p) => p.to_path_buf(),
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            }
+        };
+
+        // Security: reject absolute paths and path traversal
+        if entry_path.is_absolute() || entry_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            errors.push(format!("Skipped unsafe path: {}", entry_path.display()));
+            continue;
+        }
+
+        let entry_name = entry_path.to_string_lossy().to_string();
+        progress.update(&entry_name, count);
+
+        let out_path = extract_dir.join(&entry_path);
+        if let Err(e) = entry.unpack(&out_path) {
+            errors.push(format!("{}: {}", entry_name, e));
+        }
+
+        count += 1;
+        if let Ok(mut s) = progress.state.lock() {
+            s.total = count + 1; // tar doesn't know total upfront
+            s.completed = count;
+        }
+    }
+
+    if let Ok(mut s) = progress.state.lock() {
+        s.total = count;
+        s.completed = count;
+    }
+
+    let msg = if progress.is_cancelled() {
+        let completed = progress.state.lock().map(|s| s.completed).unwrap_or(0);
+        format!("Cancelled ({}/{})", completed, count)
+    } else if errors.is_empty() {
+        format!("Extracted to: {}", extract_dir.display())
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, vec![tar_path.to_path_buf()], errors.first().cloned(), Some(extract_dir));
+}
+
 #[cfg(windows)]
 pub fn get_drives() -> Vec<String> {
     let mut drives = Vec::new();

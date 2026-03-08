@@ -382,23 +382,31 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
         }
     }
 
-    // u: decompress zip at cursor
+    // u: decompress archive at cursor (zip, tar.gz, tgz, tar)
     if input.u {
         if let Some(entry) = app.active_panel().current_entry() {
             if !entry.is_dir {
-                let is_zip = entry
+                let name_lower = entry.name.to_lowercase();
+                let ext_lower = entry
                     .path
                     .extension()
                     .and_then(|e| e.to_str())
-                    .map(|e| e.to_lowercase() == "zip")
-                    .unwrap_or(false);
-                if is_zip {
-                    let zip_path = entry.path.clone();
-                    let dest = app.inactive_panel().current_dir.clone();
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                let dest = app.inactive_panel().current_dir.clone();
+                if ext_lower == "zip" {
                     app.start_background_op(
                         ctx,
                         OpKind::ZipDecompress {
-                            zip_path,
+                            zip_path: entry.path.clone(),
+                            dest_dir: dest,
+                        },
+                    );
+                } else if name_lower.ends_with(".tar.gz") || ext_lower == "tgz" || ext_lower == "tar" {
+                    app.start_background_op(
+                        ctx,
+                        OpKind::TarDecompress {
+                            tar_path: entry.path.clone(),
                             dest_dir: dest,
                         },
                     );
@@ -559,7 +567,7 @@ p              :  Drive select
 g              :  Registered directories
 Shift+G        :  Register current directory
 Shift+U        :  Zip compress selected
-u              :  Zip extract at cursor
+u              :  Extract archive at cursor (zip/tar.gz/tgz/tar)
 z              :  Undo last operation
 Shift+Z        :  Redo
 v              :  Preview (text/image/audio/video)

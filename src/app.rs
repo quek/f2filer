@@ -289,6 +289,7 @@ impl F2App {
             OpKind::DeletePermanent { paths } => paths.len(),
             OpKind::ZipCompress { sources, .. } => sources.len(),
             OpKind::ZipDecompress { .. } => 1,
+            OpKind::TarDecompress { .. } => 1,
         };
 
         let label = match &op_kind {
@@ -298,6 +299,7 @@ impl F2App {
             OpKind::DeletePermanent { .. } => "Permanently Deleting",
             OpKind::ZipCompress { .. } => "Compressing",
             OpKind::ZipDecompress { .. } => "Decompressing",
+            OpKind::TarDecompress { .. } => "Decompressing",
         };
 
         let progress = file_ops::ProgressHandle::new(label, total);
@@ -324,6 +326,9 @@ impl F2App {
                 }
                 OpKind::ZipDecompress { zip_path, dest_dir } => {
                     file_ops::decompress_zip_with_progress(&zip_path, &dest_dir, &handle_clone);
+                }
+                OpKind::TarDecompress { tar_path, dest_dir } => {
+                    file_ops::decompress_tar_with_progress(&tar_path, &dest_dir, &handle_clone);
                 }
             }
             repaint_ctx.request_repaint();

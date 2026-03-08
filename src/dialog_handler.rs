@@ -226,6 +226,14 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                                 });
                             }
                         }
+                        OpKind::TarDecompress { tar_path, .. } => {
+                            if let Some(extracted_dir) = result_path {
+                                app.undo_history.push(FileOperation::Decompress {
+                                    zip_path: tar_path.clone(),
+                                    extracted_dir,
+                                });
+                            }
+                        }
                     }
                 }
 

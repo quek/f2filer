@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::Path;
 
 use eframe::egui;
@@ -16,7 +17,16 @@ impl ArchivePreview {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let content = list_zip_contents(path)?;
+        let name_lower = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.to_lowercase())
+            .unwrap_or_default();
+        let content = if name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tgz") || name_lower.ends_with(".tar") {
+            list_tar_contents(path)?
+        } else {
+            list_zip_contents(path)?
+        };
 
         Some(ArchivePreview { title, content })
     }
@@ -36,13 +46,22 @@ impl ArchivePreview {
     }
 }
 
-const ARCHIVE_EXTENSIONS: &[&str] = &["zip"];
-
 pub fn is_archive_file(path: &Path) -> bool {
-    path.extension()
+    let ext_lower = path
+        .extension()
         .and_then(|e| e.to_str())
-        .map(|e| ARCHIVE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-        .unwrap_or(false)
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    if matches!(ext_lower.as_str(), "zip" | "tgz" | "tar") {
+        return true;
+    }
+    // Check for .tar.gz (double extension)
+    let name_lower = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_lowercase())
+        .unwrap_or_default();
+    name_lower.ends_with(".tar.gz")
 }
 
 fn list_zip_contents(path: &Path) -> Option<String> {
@@ -80,6 +99,81 @@ fn list_zip_contents(path: &Path) -> Option<String> {
         };
 
         lines.push(format!("{}  {}  {}", date_str, size_str, name));
+    }
+
+    let header = format!("{} files, {}", file_count, format_size(total_size));
+    let separator = "─".repeat(60);
+
+    let mut result = String::new();
+    result.push_str(&header);
+    result.push('\n');
+    result.push_str(&separator);
+    result.push('\n');
+    for line in &lines {
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    Some(result)
+}
+
+fn list_tar_contents(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+
+    let name_lower = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_lowercase())
+        .unwrap_or_default();
+    let is_gzip = name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tgz");
+
+    let mut archive = if is_gzip {
+        let decoder = flate2::read::GzDecoder::new(file);
+        tar::Archive::new(Box::new(decoder) as Box<dyn Read>)
+    } else {
+        tar::Archive::new(Box::new(file) as Box<dyn Read>)
+    };
+
+    let entries = archive.entries().ok()?;
+
+    let mut lines = Vec::new();
+    let mut total_size: u64 = 0;
+    let mut file_count: usize = 0;
+
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let entry_path = match entry.path() {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => continue,
+        };
+
+        let size = entry.size();
+        total_size += size;
+        file_count += 1;
+
+        let mtime = entry.header().mtime().unwrap_or(0);
+        let date_str = if mtime > 0 {
+            let dt = chrono::DateTime::from_timestamp(mtime as i64, 0);
+            match dt {
+                Some(d) => d.format("%Y-%m-%d %H:%M").to_string(),
+                None => "                ".to_string(),
+            }
+        } else {
+            "                ".to_string()
+        };
+
+        let is_dir = entry.header().entry_type().is_dir();
+        let size_str = if is_dir {
+            "     <DIR>".to_string()
+        } else {
+            format!("{:>10}", format_size(size))
+        };
+
+        lines.push(format!("{}  {}  {}", date_str, size_str, entry_path));
     }
 
     let header = format!("{} files, {}", file_count, format_size(total_size));
