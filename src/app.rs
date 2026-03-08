@@ -465,7 +465,15 @@ impl eframe::App for F2App {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("[h]Up [l]Open [c]Copy [m]Move [d]Del [r]Ren [n]NewDir [o]Sync [i]Switch");
+                    let now = chrono::Local::now();
+                    let weekday_en = now.format("%a").to_string();
+                    let weekday = match weekday_en.as_str() {
+                        "Mon" => "月", "Tue" => "火", "Wed" => "水",
+                        "Thu" => "木", "Fri" => "金", "Sat" => "土",
+                        "Sun" => "日", other => other,
+                    };
+                    ui.label(format!("{}{}{}", now.format("%Y/%m/%d"), weekday, now.format("%H:%M:%S")));
+                    ctx.request_repaint_after(std::time::Duration::from_secs(1));
                 });
             });
         });
