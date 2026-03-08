@@ -225,7 +225,7 @@ fn start_frame_decoder(
                 "-i", &path_str,
                 "-f", "rawvideo",
                 "-pix_fmt", "rgba",
-                "-vf", &format!("scale={}:{}", width, height),
+                "-vf", &format!("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709,scale={}:{}", width, height),
                 "-v", "quiet",
                 "pipe:1",
             ])
