@@ -724,9 +724,11 @@ impl FilePanel {
 
                     ui.painter().rect_filled(row_rect, 0.0, bg_color);
 
-                    // Build display text
+                    // Build display text (strip extension for files since Ext column shows it)
                     let name_display = if entry.is_dir && entry.name != ".." {
                         format!("[{}]", entry.name)
+                    } else if !entry.is_dir && !entry.extension.is_empty() {
+                        entry.name[..entry.name.len() - entry.extension.len() - 1].to_string()
                     } else {
                         entry.name.clone()
                     };
