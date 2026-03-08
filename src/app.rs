@@ -392,6 +392,10 @@ impl eframe::App for F2App {
         self.left_panel.check_loading_complete();
         self.right_panel.check_loading_complete();
 
+        // Auto-refresh directories when filesystem changes
+        self.left_panel.check_auto_refresh();
+        self.right_panel.check_auto_refresh();
+
         // Poll background image loading
         if self.preview_mode {
             if let Some(preview) = self.image_cache.poll_loaded(ctx) {

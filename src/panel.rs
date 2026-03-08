@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 
@@ -110,6 +111,8 @@ pub struct FilePanel {
     loading_result: Arc<Mutex<Option<(u64, Vec<FileItem>)>>>,
     loading_generation: u64,
     loading_old_name: Option<String>,
+    last_dir_modified: Option<SystemTime>,
+    last_dir_check: Instant,
 }
 
 impl FilePanel {
@@ -135,6 +138,8 @@ impl FilePanel {
             loading_result: Arc::new(Mutex::new(None)),
             loading_generation: 0,
             loading_old_name: None,
+            last_dir_modified: None,
+            last_dir_check: Instant::now(),
         };
         panel.refresh();
         panel
@@ -148,6 +153,7 @@ impl FilePanel {
         if self.cursor >= self.visible_count() {
             self.cursor = self.visible_count().saturating_sub(1);
         }
+        self.update_dir_mtime();
     }
 
     fn rebuild_filter(&mut self) {
@@ -269,6 +275,70 @@ impl FilePanel {
                 }
             }
             self.is_loading = false;
+            self.update_dir_mtime();
+        }
+    }
+
+    /// Record the current directory's modification time for auto-refresh.
+    fn update_dir_mtime(&mut self) {
+        self.last_dir_modified = std::fs::metadata(&self.current_dir)
+            .and_then(|m| m.modified())
+            .ok();
+        self.last_dir_check = Instant::now();
+    }
+
+    /// Check if the directory has changed and auto-refresh if needed.
+    /// Preserves cursor position and selection by filename.
+    pub fn check_auto_refresh(&mut self) {
+        if self.is_loading {
+            return;
+        }
+        if self.last_dir_check.elapsed() < std::time::Duration::from_secs(2) {
+            return;
+        }
+        self.last_dir_check = Instant::now();
+
+        let current_mtime = std::fs::metadata(&self.current_dir)
+            .and_then(|m| m.modified())
+            .ok();
+        if current_mtime == self.last_dir_modified {
+            return;
+        }
+        self.last_dir_modified = current_mtime;
+
+        // Save cursor and selection by filename
+        let cursor_name = self.current_entry().map(|e| e.name.clone());
+        let selected_names: HashSet<String> = self
+            .selected
+            .iter()
+            .filter_map(|&idx| self.entries.get(idx).map(|e| e.name.clone()))
+            .collect();
+
+        self.entries = read_directory(&self.current_dir);
+        sort_entries(&mut self.entries, self.sort_key, self.sort_order);
+        self.rebuild_filter();
+
+        // Restore selection by filename
+        self.selected.clear();
+        if !selected_names.is_empty() {
+            for &idx in &self.filtered_indices {
+                if selected_names.contains(&self.entries[idx].name) {
+                    self.selected.insert(idx);
+                }
+            }
+        }
+
+        // Restore cursor position by filename
+        if let Some(name) = cursor_name {
+            for (i, &idx) in self.filtered_indices.iter().enumerate() {
+                if self.entries[idx].name == name {
+                    self.cursor = i;
+                    return;
+                }
+            }
+        }
+        if self.cursor >= self.visible_count() {
+            self.cursor = self.visible_count().saturating_sub(1);
         }
     }
 
