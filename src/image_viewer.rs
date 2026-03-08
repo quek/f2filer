@@ -205,12 +205,17 @@ impl ImageCache {
 fn decode_image(path: &Path) -> Option<DecodedImage> {
     let data = std::fs::read(path).ok()?;
 
-    // Check if GIF with animation
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
+    // SVG
+    if ext.as_deref() == Some("svg") {
+        return decode_svg(path, &data);
+    }
+
+    // GIF with animation
     if ext.as_deref() == Some("gif") {
         if let Some(decoded) = decode_gif_frames(path, &data) {
             if decoded.frames.len() > 1 {
@@ -236,6 +241,47 @@ fn decode_image(path: &Path) -> Option<DecodedImage> {
             width: w,
             height: h,
             rgba: rgba.into_raw(),
+            delay_ms: 0,
+        }],
+    })
+}
+
+fn decode_svg(path: &Path, data: &[u8]) -> Option<DecodedImage> {
+    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
+    let size = tree.size();
+    let (orig_w, orig_h) = (size.width(), size.height());
+
+    // Scale to fit within MAX_PREVIEW_SIZE
+    let scale = if orig_w > MAX_PREVIEW_SIZE as f32 || orig_h > MAX_PREVIEW_SIZE as f32 {
+        (MAX_PREVIEW_SIZE as f32 / orig_w).min(MAX_PREVIEW_SIZE as f32 / orig_h)
+    } else {
+        1.0
+    };
+
+    let w = (orig_w * scale).ceil() as u32;
+    let h = (orig_h * scale).ceil() as u32;
+
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    // tiny-skia outputs premultiplied RGBA; convert to straight RGBA
+    let mut rgba = pixmap.take();
+    for pixel in rgba.chunks_exact_mut(4) {
+        let a = pixel[3] as u16;
+        if a > 0 && a < 255 {
+            pixel[0] = ((pixel[0] as u16 * 255) / a).min(255) as u8;
+            pixel[1] = ((pixel[1] as u16 * 255) / a).min(255) as u8;
+            pixel[2] = ((pixel[2] as u16 * 255) / a).min(255) as u8;
+        }
+    }
+
+    Some(DecodedImage {
+        path: path.to_path_buf(),
+        frames: vec![DecodedFrame {
+            width: w,
+            height: h,
+            rgba,
             delay_ms: 0,
         }],
     })
@@ -363,7 +409,7 @@ impl ImagePreview {
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico",
+    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg",
 ];
 
 pub fn is_image_file(path: &Path) -> bool {

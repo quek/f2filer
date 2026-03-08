@@ -15,6 +15,7 @@ hound = "3"
 rodio = "0.19"
 zip = "2"
 arboard = "3"
+resvg = "0.44"
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.58"
