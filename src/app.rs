@@ -61,9 +61,24 @@ impl F2App {
             });
         }
 
+        // Load cursor history from config (skip stale ".." entries)
+        let cursor_history: std::collections::HashMap<PathBuf, String> = config
+            .cursor_dirs
+            .iter()
+            .filter(|(_, v)| v.as_str() != "..")
+            .map(|(k, v)| (PathBuf::from(k), v.clone()))
+            .collect();
+
+        let mut left_panel = FilePanel::new(left_dir);
+        let mut right_panel = FilePanel::new(right_dir);
+        left_panel.cursor_history = cursor_history.clone();
+        right_panel.cursor_history = cursor_history;
+        left_panel.restore_cursor_from_history();
+        right_panel.restore_cursor_from_history();
+
         F2App {
-            left_panel: FilePanel::new(left_dir),
-            right_panel: FilePanel::new(right_dir),
+            left_panel,
+            right_panel,
             active: ActivePanel::Left,
             dialog: DialogState::default(),
             text_preview: None,
@@ -204,6 +219,10 @@ impl F2App {
     }
 
     pub(crate) fn save_config(&mut self) {
+        // Save current cursor positions before persisting
+        self.left_panel.save_cursor_position();
+        self.right_panel.save_cursor_position();
+
         self.config.last_left_dir =
             Some(self.left_panel.current_dir.to_string_lossy().to_string());
         self.config.last_right_dir =
@@ -215,6 +234,16 @@ impl F2App {
                     drive,
                     panel_dir.to_string_lossy().to_string(),
                 );
+            }
+        }
+        // Save per-directory cursor positions (only entries modified this session)
+        for panel in [&self.left_panel, &self.right_panel] {
+            for dir in &panel.cursor_dirty {
+                if let Some(name) = panel.cursor_history.get(dir as &PathBuf) {
+                    self.config
+                        .cursor_dirs
+                        .insert(dir.to_string_lossy().to_string(), name.clone());
+                }
             }
         }
         // Save window position and size

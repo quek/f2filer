@@ -26,6 +26,8 @@ pub struct Config {
     pub window_height: Option<f32>,
     #[serde(default)]
     pub registered_dirs: Vec<RegisteredDir>,
+    #[serde(default)]
+    pub cursor_dirs: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             window_width: None,
             window_height: None,
             registered_dirs: Vec::new(),
+            cursor_dirs: HashMap::new(),
         }
     }
 }
@@ -64,8 +67,11 @@ impl Config {
 
     pub fn save(&self) {
         let path = Self::config_path();
+        let tmp_path = path.with_extension("json.tmp");
         if let Ok(data) = serde_json::to_string_pretty(self) {
-            std::fs::write(path, data).ok();
+            if std::fs::write(&tmp_path, &data).is_ok() {
+                std::fs::rename(&tmp_path, &path).ok();
+            }
         }
     }
 }

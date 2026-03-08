@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
@@ -113,6 +113,9 @@ pub struct FilePanel {
     loading_old_name: Option<String>,
     last_dir_modified: Option<SystemTime>,
     last_dir_check: Instant,
+    pub cursor_history: HashMap<PathBuf, String>,
+    /// Directories whose cursor_history was modified in this session.
+    pub(crate) cursor_dirty: HashSet<PathBuf>,
 }
 
 impl FilePanel {
@@ -140,6 +143,8 @@ impl FilePanel {
             loading_old_name: None,
             last_dir_modified: None,
             last_dir_check: Instant::now(),
+            cursor_history: HashMap::new(),
+            cursor_dirty: HashSet::new(),
         };
         panel.refresh();
         panel
@@ -226,8 +231,59 @@ impl FilePanel {
         self.rebuild_filter();
     }
 
+    /// Find the visible index of an entry by name.
+    fn find_visible_by_name(&self, name: &str) -> Option<usize> {
+        self.filtered_indices
+            .iter()
+            .enumerate()
+            .find_map(|(i, &idx)| {
+                if self.entries[idx].name == name {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Restore cursor position from history for the current directory.
+    pub fn restore_cursor_from_history(&mut self) {
+        if let Some(idx) = self
+            .cursor_history
+            .get(&self.current_dir)
+            .and_then(|name| self.find_visible_by_name(name))
+        {
+            self.cursor = idx;
+        }
+    }
+
+    /// Save current cursor filename to history.
+    /// Skips ".." since it's not a meaningful position to restore.
+    pub(crate) fn save_cursor_position(&mut self) {
+        if let Some(entry) = self.current_entry() {
+            if entry.name != ".." {
+                let dir = self.current_dir.clone();
+                let name = entry.name.clone();
+                self.cursor_dirty.insert(dir.clone());
+                self.cursor_history.insert(dir, name);
+            }
+        }
+    }
+
     pub fn navigate_to(&mut self, dir: PathBuf, ctx: &egui::Context) {
-        let old_dir_name = self.current_dir.file_name().map(|n| n.to_string_lossy().to_string());
+        self.save_cursor_position();
+        // Only set loading_old_name when going up to parent directory.
+        // This positions the cursor on the directory we came from.
+        let is_going_up = self
+            .current_dir
+            .parent()
+            .map_or(false, |p| p == dir.as_path());
+        self.loading_old_name = if is_going_up {
+            self.current_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        } else {
+            None
+        };
         self.current_dir = dir.clone();
         self.cursor = 0;
         self.filter.clear();
@@ -236,7 +292,6 @@ impl FilePanel {
         self.selected.clear();
         self.is_loading = true;
         self.loading_generation += 1;
-        self.loading_old_name = old_dir_name;
 
         let gen = self.loading_generation;
         let result = Arc::clone(&self.loading_result);
@@ -257,6 +312,7 @@ impl FilePanel {
         resolver: impl FnOnce() -> PathBuf + Send + 'static,
         ctx: &egui::Context,
     ) {
+        self.save_cursor_position();
         self.current_dir = placeholder_dir;
         self.cursor = 0;
         self.filter.clear();
@@ -299,14 +355,20 @@ impl FilePanel {
             if self.cursor >= self.visible_count() {
                 self.cursor = self.visible_count().saturating_sub(1);
             }
-            // If going up, position cursor on the directory we came from
-            if let Some(old_name) = self.loading_old_name.take() {
-                for (i, idx) in self.filtered_indices.iter().enumerate() {
-                    if self.entries[*idx].name == old_name {
-                        self.cursor = i;
-                        break;
-                    }
-                }
+            // Restore cursor position:
+            // 1. loading_old_name: going up → position on the directory we came from
+            // 2. cursor_history: revisiting → restore last cursor position
+            let restored = self
+                .loading_old_name
+                .take()
+                .and_then(|name| self.find_visible_by_name(&name))
+                .or_else(|| {
+                    self.cursor_history
+                        .get(&self.current_dir)
+                        .and_then(|name| self.find_visible_by_name(name))
+                });
+            if let Some(idx) = restored {
+                self.cursor = idx;
             }
             self.is_loading = false;
             self.update_dir_mtime();
