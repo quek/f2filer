@@ -218,7 +218,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
     // e: open with text editor (.txt association)
     if input.e {
         if let Some(entry) = app.active_panel().current_entry() {
-            if !entry.is_dir && entry.name != ".." {
+            if !entry.is_dir {
                 crate::shell::open_with_text_editor(&entry.path);
             }
         }
@@ -348,19 +348,15 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
     // Alt+Enter: file properties
     if input.alt_enter {
         if let Some(entry) = app.active_panel().current_entry() {
-            if entry.name != ".." {
-                crate::shell::show_file_properties(&entry.path);
-            }
+            crate::shell::show_file_properties(&entry.path);
         }
     }
 
     // \: context menu
     if input.backslash {
         if let Some(entry) = app.active_panel().current_entry().cloned() {
-            if entry.name != ".." {
-                crate::shell::show_context_menu(&entry.path);
-                app.active_panel_mut().refresh();
-            }
+            crate::shell::show_context_menu(&entry.path);
+            app.active_panel_mut().refresh();
         }
     }
 
@@ -457,13 +453,11 @@ fn handle_edit_operations(app: &mut F2App, input: &KeyState) {
     // r: rename
     if input.r {
         if let Some(entry) = app.active_panel().current_entry() {
-            if entry.name != ".." {
-                app.dialog.input = Some(InputDialog {
-                    title: "Rename".to_string(),
-                    value: entry.name.clone(),
-                    action: InputAction::Rename(entry.path.clone()),
-                });
-            }
+            app.dialog.input = Some(InputDialog {
+                title: "Rename".to_string(),
+                value: entry.name.clone(),
+                action: InputAction::Rename(entry.path.clone()),
+            });
         }
     }
 

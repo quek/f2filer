@@ -171,9 +171,6 @@ impl FilePanel {
                 if !self.show_hidden && item.is_hidden {
                     return false;
                 }
-                if item.name == ".." {
-                    return true;
-                }
                 if filter_lower.is_empty() {
                     return true;
                 }
@@ -207,16 +204,9 @@ impl FilePanel {
         if self.cursor >= self.visible_count() {
             self.cursor = self.visible_count().saturating_sub(1);
         }
-        // Auto-move cursor to first matching file (skip "..")
-        if !self.filter.is_empty() {
-            for (vis_idx, &real_idx) in self.filtered_indices.iter().enumerate() {
-                if let Some(entry) = self.entries.get(real_idx) {
-                    if entry.name != ".." {
-                        self.cursor = vis_idx;
-                        break;
-                    }
-                }
-            }
+        // Auto-move cursor to first matching file
+        if !self.filter.is_empty() && !self.filtered_indices.is_empty() {
+            self.cursor = 0;
         }
     }
 
@@ -257,15 +247,12 @@ impl FilePanel {
     }
 
     /// Save current cursor filename to history.
-    /// Skips ".." since it's not a meaningful position to restore.
     pub(crate) fn save_cursor_position(&mut self) {
         if let Some(entry) = self.current_entry() {
-            if entry.name != ".." {
-                let dir = self.current_dir.clone();
-                let name = entry.name.clone();
-                self.cursor_dirty.insert(dir.clone());
-                self.cursor_history.insert(dir, name);
-            }
+            let dir = self.current_dir.clone();
+            let name = entry.name.clone();
+            self.cursor_dirty.insert(dir.clone());
+            self.cursor_history.insert(dir, name);
         }
     }
 
@@ -467,10 +454,6 @@ impl FilePanel {
 
     pub fn toggle_select(&mut self) {
         if let Some(real_idx) = self.real_index(self.cursor) {
-            // Don't allow selecting ".."
-            if self.entries[real_idx].name == ".." {
-                return;
-            }
             if self.selected.contains(&real_idx) {
                 self.selected.remove(&real_idx);
             } else {
@@ -482,9 +465,7 @@ impl FilePanel {
     pub fn select_all(&mut self) {
         self.selected.clear();
         for &idx in &self.filtered_indices {
-            if self.entries[idx].name != ".." {
-                self.selected.insert(idx);
-            }
+            self.selected.insert(idx);
         }
     }
 
@@ -545,15 +526,8 @@ impl FilePanel {
             // so use lost_focus() to detect Enter confirmation
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.filter_has_focus = false;
-                if !self.filter.is_empty() {
-                    for (vis_idx, &real_idx) in self.filtered_indices.iter().enumerate() {
-                        if let Some(entry) = self.entries.get(real_idx) {
-                            if entry.name != ".." {
-                                self.cursor = vis_idx;
-                                break;
-                            }
-                        }
-                    }
+                if !self.filter.is_empty() && !self.filtered_indices.is_empty() {
+                    self.cursor = 0;
                 }
             }
             if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -725,9 +699,9 @@ impl FilePanel {
                     ui.painter().rect_filled(row_rect, 0.0, bg_color);
 
                     // Build display text (strip extension for files since Ext column shows it)
-                    let name_display = if entry.is_dir && entry.name != ".." {
+                    let name_display = if entry.is_dir {
                         format!("[{}]", entry.name)
-                    } else if !entry.is_dir && !entry.extension.is_empty() {
+                    } else if !entry.extension.is_empty() {
                         entry.name[..entry.name.len() - entry.extension.len() - 1].to_string()
                     } else {
                         entry.name.clone()
@@ -801,16 +775,12 @@ impl FilePanel {
                             // Drag all selected files
                             for &idx in &self.selected {
                                 if let Some(item) = self.entries.get(idx) {
-                                    if item.name != ".." {
-                                        paths.push(item.path.clone());
-                                    }
+                                    paths.push(item.path.clone());
                                 }
                             }
                         } else if let Some(item) = self.visible_entry(vis_idx) {
                             // Drag file under cursor
-                            if item.name != ".." {
-                                paths.push(item.path.clone());
-                            }
+                            paths.push(item.path.clone());
                         }
                         if !paths.is_empty() {
                             self.drag_request = Some(paths);

@@ -61,11 +61,10 @@ impl F2App {
             });
         }
 
-        // Load cursor history from config (skip stale ".." entries)
+        // Load cursor history from config
         let cursor_history: std::collections::HashMap<PathBuf, String> = config
             .cursor_dirs
             .iter()
-            .filter(|(_, v)| v.as_str() != "..")
             .map(|(k, v)| (PathBuf::from(k), v.clone()))
             .collect();
 

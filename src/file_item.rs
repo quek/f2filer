@@ -40,18 +40,6 @@ impl FileItem {
         })
     }
 
-    pub fn parent_entry(parent_path: PathBuf) -> Self {
-        FileItem {
-            name: "..".to_string(),
-            path: parent_path,
-            size: 0,
-            modified: None,
-            is_dir: true,
-            is_hidden: false,
-            extension: String::new(),
-        }
-    }
-
     pub fn formatted_ext(&self) -> &str {
         if self.is_dir {
             "<DIR>"
@@ -145,44 +133,41 @@ mod tests {
         assert_eq!(format_size(1024 * 1024 * 1024 * 2), "2.0 GB");
     }
 
+    fn make_dir(name: &str) -> FileItem {
+        FileItem {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+            size: 0,
+            modified: None,
+            is_dir: true,
+            is_hidden: false,
+            extension: String::new(),
+        }
+    }
+
     #[test]
     fn file_item_formatted_ext_dir() {
-        let item = FileItem::parent_entry(PathBuf::from("/tmp"));
+        let item = make_dir("testdir");
         assert_eq!(item.formatted_ext(), "<DIR>");
     }
 
     #[test]
     fn file_item_formatted_size_dir() {
-        let item = FileItem::parent_entry(PathBuf::from("/tmp"));
+        let item = make_dir("testdir");
         assert_eq!(item.formatted_size(), "");
     }
 
     #[test]
-    fn file_item_parent_entry() {
-        let item = FileItem::parent_entry(PathBuf::from("/home"));
-        assert_eq!(item.name, "..");
-        assert!(item.is_dir);
-        assert_eq!(item.size, 0);
-        assert!(!item.is_hidden);
-    }
-
-    #[test]
-    fn read_directory_returns_parent() {
+    fn read_directory_no_dotdot() {
         let dir = std::env::current_dir().unwrap();
         let entries = read_directory(&dir);
-        // Should have at least ".." if the dir has a parent
-        if dir.parent().is_some() {
-            assert_eq!(entries.first().unwrap().name, "..");
-        }
+        // ".." should not be included in directory listing
+        assert!(entries.iter().all(|e| e.name != ".."));
     }
 }
 
 pub fn read_directory(dir: &Path) -> Vec<FileItem> {
     let mut entries = Vec::new();
-
-    if let Some(parent) = dir.parent() {
-        entries.push(FileItem::parent_entry(parent.to_path_buf()));
-    }
 
     if let Ok(read_dir) = std::fs::read_dir(dir) {
         for entry in read_dir.flatten() {

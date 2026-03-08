@@ -24,18 +24,11 @@ impl SortOrder {
 }
 
 pub fn sort_entries(entries: &mut [FileItem], key: SortKey, order: SortOrder) {
-    // Keep ".." always at the top
-    let start = if entries.first().is_some_and(|e| e.name == "..") {
-        1
-    } else {
-        0
-    };
-
-    if start >= entries.len() {
+    if entries.is_empty() {
         return;
     }
 
-    let slice = &mut entries[start..];
+    let slice = &mut entries[..];
 
     slice.sort_by(|a, b| {
         // Directories always come before files
@@ -177,16 +170,14 @@ mod tests {
     }
 
     #[test]
-    fn dotdot_stays_at_top() {
+    fn dirs_sorted_before_files() {
         let mut entries = vec![
-            FileItem::parent_entry(PathBuf::from("/")),
             make_file("z.txt", "txt", 100, 0),
             make_dir("a_dir"),
         ];
         sort_entries(&mut entries, SortKey::Name, SortOrder::Ascending);
-        assert_eq!(entries[0].name, "..");
-        assert_eq!(entries[1].name, "a_dir");
-        assert_eq!(entries[2].name, "z.txt");
+        assert_eq!(entries[0].name, "a_dir");
+        assert_eq!(entries[1].name, "z.txt");
     }
 
     #[test]
