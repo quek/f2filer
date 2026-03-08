@@ -117,11 +117,19 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
             }
         }
         DialogResult::DriveSelected(drive) => {
-            let path = app.resolve_drive_path(&drive);
-            if path.exists() {
-                app.active_panel_mut().navigate_to(path, ctx);
-                app.save_config();
-            }
+            let saved_dir = app.config.drive_dirs.get(&drive).cloned();
+            let drive_clone = drive.clone();
+            // Show placeholder path immediately while resolving in background
+            let placeholder = if drive.starts_with("WSL:") || drive.starts_with(r"\\") {
+                PathBuf::from(&drive)
+            } else {
+                PathBuf::from(format!("{}\\", drive))
+            };
+            app.active_panel_mut().navigate_to_with_resolver(
+                placeholder,
+                move || crate::app::resolve_drive_path_bg(saved_dir, &drive_clone),
+                ctx,
+            );
         }
         DialogResult::RegisteredDirSelected(path_str) => {
             let path = PathBuf::from(&path_str);

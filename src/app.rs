@@ -229,31 +229,6 @@ impl F2App {
         self.config.save();
     }
 
-    /// Resolve drive path: use saved per-drive directory if available, otherwise drive root.
-    pub(crate) fn resolve_drive_path(&self, drive: &str) -> PathBuf {
-        if let Some(saved) = self.config.drive_dirs.get(drive) {
-            let path = PathBuf::from(saved);
-            if path.exists() {
-                return path;
-            }
-        }
-        if let Some(distro) = drive.strip_prefix("WSL:") {
-            // WSL drives: try \\wsl$ first (more compatible), then \\wsl.localhost
-            for base in &[r"\\wsl$", r"\\wsl.localhost"] {
-                let path = PathBuf::from(format!(r"{}\{}", base, distro));
-                if path.exists() {
-                    return path;
-                }
-            }
-            return PathBuf::from(format!(r"\\wsl$\{}", distro));
-        }
-        if drive.starts_with(r"\\") {
-            // Generic UNC path: drive is already "\\server\share"
-            return PathBuf::from(format!(r"{}\", drive));
-        }
-        PathBuf::from(format!("{}\\", drive))
-    }
-
     pub(crate) fn start_background_op(&mut self, ctx: &egui::Context, op_kind: OpKind) {
         let total = match &op_kind {
             OpKind::Copy { sources, .. } => sources.len(),
@@ -389,8 +364,11 @@ impl eframe::App for F2App {
         crate::keyboard::handle_keyboard(self, ctx);
 
         // Check for async directory loading completion
-        self.left_panel.check_loading_complete();
-        self.right_panel.check_loading_complete();
+        let left_loaded = self.left_panel.check_loading_complete();
+        let right_loaded = self.right_panel.check_loading_complete();
+        if left_loaded || right_loaded {
+            self.save_config();
+        }
 
         // Auto-refresh directories when filesystem changes
         self.left_panel.check_auto_refresh();
@@ -618,6 +596,30 @@ impl F2App {
         }
         self.command_line.clear();
     }
+}
+
+/// Resolve drive path in background thread (no UI blocking).
+/// Extracted from F2App::resolve_drive_path for use in background threads.
+pub(crate) fn resolve_drive_path_bg(saved_dir: Option<String>, drive: &str) -> PathBuf {
+    if let Some(saved) = saved_dir {
+        let path = PathBuf::from(&saved);
+        if path.exists() {
+            return path;
+        }
+    }
+    if let Some(distro) = drive.strip_prefix("WSL:") {
+        for base in &[r"\\wsl$", r"\\wsl.localhost"] {
+            let path = PathBuf::from(format!(r"{}\{}", base, distro));
+            if path.exists() {
+                return path;
+            }
+        }
+        return PathBuf::from(format!(r"\\wsl$\{}", distro));
+    }
+    if drive.starts_with(r"\\") {
+        return PathBuf::from(format!(r"{}\", drive));
+    }
+    PathBuf::from(format!("{}\\", drive))
 }
 
 fn default_dir() -> PathBuf {

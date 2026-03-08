@@ -108,7 +108,7 @@ pub struct FilePanel {
     scroll_offset: f32,
     viewport_h: f32,
     pub is_loading: bool,
-    loading_result: Arc<Mutex<Option<(u64, Vec<FileItem>)>>>,
+    loading_result: Arc<Mutex<Option<(u64, Vec<FileItem>, Option<PathBuf>)>>>,
     loading_generation: u64,
     loading_old_name: Option<String>,
     last_dir_modified: Option<SystemTime>,
@@ -243,20 +243,54 @@ impl FilePanel {
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
             let entries = read_directory(&dir);
-            *result.lock().unwrap() = Some((gen, entries));
+            *result.lock().unwrap() = Some((gen, entries, None));
             repaint_ctx.request_repaint();
         });
     }
 
-    /// Poll for async directory loading completion.
-    pub fn check_loading_complete(&mut self) {
+    /// Navigate with a resolver function that runs in a background thread.
+    /// The resolver determines the actual directory path (e.g., drive path resolution
+    /// with exists() checks), avoiding UI thread blocking.
+    pub fn navigate_to_with_resolver(
+        &mut self,
+        placeholder_dir: PathBuf,
+        resolver: impl FnOnce() -> PathBuf + Send + 'static,
+        ctx: &egui::Context,
+    ) {
+        self.current_dir = placeholder_dir;
+        self.cursor = 0;
+        self.filter.clear();
+        self.entries.clear();
+        self.filtered_indices.clear();
+        self.selected.clear();
+        self.is_loading = true;
+        self.loading_generation += 1;
+        self.loading_old_name = None;
+
+        let gen = self.loading_generation;
+        let result = Arc::clone(&self.loading_result);
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let dir = resolver();
+            let entries = read_directory(&dir);
+            *result.lock().unwrap() = Some((gen, entries, Some(dir)));
+            repaint_ctx.request_repaint();
+        });
+    }
+
+    /// Poll for async directory loading completion. Returns true if loading just completed.
+    pub fn check_loading_complete(&mut self) -> bool {
         if !self.is_loading {
-            return;
+            return false;
         }
         let data = self.loading_result.lock().unwrap().take();
-        if let Some((gen, entries)) = data {
+        if let Some((gen, entries, resolved_dir)) = data {
             if gen != self.loading_generation {
-                return; // stale result from a superseded navigation
+                return false; // stale result from a superseded navigation
+            }
+            // Update current_dir if the background thread resolved the actual path
+            if let Some(dir) = resolved_dir {
+                self.current_dir = dir;
             }
             self.entries = entries;
             sort_entries(&mut self.entries, self.sort_key, self.sort_order);
@@ -276,7 +310,9 @@ impl FilePanel {
             }
             self.is_loading = false;
             self.update_dir_mtime();
+            return true;
         }
+        false
     }
 
     /// Record the current directory's modification time for auto-refresh.
