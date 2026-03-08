@@ -541,11 +541,11 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, input: &KeyState) {
             title: "Keyboard Shortcuts".to_string(),
             message: "\
 j / k / ↑ / ↓  :  Cursor move
-l              :  Open dir / Execute file
+l / Enter      :  Open dir / Execute file
 e              :  Open with text editor
 h              :  Parent directory
 i              :  Switch panel
-Space          :  Toggle select
+Space / Ins    :  Toggle select
 a              :  Toggle select all / deselect
 f              :  Focus filter
 o              :  Sync opposite panel

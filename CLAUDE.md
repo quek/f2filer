@@ -47,6 +47,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - UNC パスの識別は `std::path::Prefix::UNC` を使用し、WSL 固有ではなく汎用的に処理
 - UNC パス上のファイル削除はゴミ箱が使えないため `fs::remove_file` / `fs::remove_dir_all` にフォールバック
 - UNC share root（`\\server\share`）からの上方ナビゲーションは Rust の `Path::parent()` が `None` を返すことで自然に防止される
+- ディレクトリ読み込み (`read_directory`) はバックグラウンドスレッドで非同期実行し、読み込み中はスピナーを表示。generation カウンタで古い結果を破棄
+- **UIスレッドで `path.exists()` や `fs::metadata()` など I/O ブロッキング呼び出しを行わないこと。** HDD/ネットワーク/WSL ドライブでは数秒かかる場合がある。`navigate_to_with_resolver` でパス解決も含めてバックグラウンドで実行する
+- ディレクトリの自動リフレッシュは `fs::metadata().modified()` の mtime ポーリング（2秒間隔）で実現。カーソル位置・選択状態はファイル名で復元
 
 ## Coding Principles
 
@@ -63,6 +66,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - 共通処理は関数に抽出する（例: `copy_file_or_dir_inner` で通常コピーと上書きコピーを共通化）
 - 定数やマジックナンバーは変数として定義する
 - パターンが3回繰り返されたら抽象化を検討する
+
+### 整合性の維持
+- キーバインドを追加・変更したら `handle_misc_keys` 内のヘルプテキスト（`?` キー）も必ず更新する
+- コメントにキー名を含む場合（例: `// Ctrl+.: toggle hidden`）、キー変更時にコメントも更新する
 
 ### Security
 - ユーザー入力のパスは必ず検証する
