@@ -408,8 +408,6 @@ impl eframe::App for F2App {
         crate::dialog_handler::handle_dialog_result(self, ctx, result);
 
 
-
-
         // Bottom panel: status bar + command line
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             // Command line

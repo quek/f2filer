@@ -490,7 +490,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, input: &KeyState) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
-    // Ctrl+.: toggle hidden
+    // .: toggle hidden
     if input.period {
         let show = !app.active_panel().show_hidden;
         app.active_panel_mut().show_hidden = show;
@@ -558,6 +558,9 @@ Shift+D        :  Permanent delete (no undo)
 Shift+X        :  Open recycle bin
 r              :  Rename
 n              :  New directory
+y              :  Copy file path to clipboard
+\\             :  Context menu
+Alt+Enter      :  File properties
 p              :  Drive select
 g              :  Registered directories
 Shift+G        :  Register current directory
@@ -568,7 +571,8 @@ Shift+Z        :  Redo
 v              :  Preview (text/image/audio/video)
 Ctrl+R         :  Refresh
 .              :  Toggle hidden files
-Ctrl+Q         :  Quit
+:              :  Command mode
+q / Ctrl+Q     :  Quit
 Alt+k / Alt+j  :  Jump to top / bottom
 PgUp / PgDn    :  Page scroll
 ?              :  This help"
