@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::archive_viewer;
 use eframe::egui;
 
 use crate::config::Config;
@@ -26,6 +27,7 @@ pub struct F2App {
     pub(crate) active: ActivePanel,
     pub(crate) dialog: DialogState,
     pub(crate) text_preview: Option<TextPreview>,
+    pub(crate) archive_preview: Option<archive_viewer::ArchivePreview>,
     pub(crate) image_preview: Option<ImagePreview>,
     pub(crate) image_cache: ImageCache,
     pub(crate) audio_preview: Option<AudioPreview>,
@@ -81,6 +83,7 @@ impl F2App {
             active: ActivePanel::Left,
             dialog: DialogState::default(),
             text_preview: None,
+            archive_preview: None,
             image_preview: None,
             image_cache: ImageCache::new(),
             audio_preview: None,
@@ -142,6 +145,7 @@ impl F2App {
         if audio_viewer::is_audio_file(&entry.path) {
             // Audio file
             self.text_preview = None;
+            self.archive_preview = None;
             self.image_preview = None;
             self.image_cache.clear_wanted();
             self.stop_video_preview();
@@ -158,6 +162,7 @@ impl F2App {
         } else if video_viewer::is_video_file(&entry.path) {
             // Video file
             self.text_preview = None;
+            self.archive_preview = None;
             self.image_preview = None;
             self.image_cache.clear_wanted();
             if let Some(ap) = &mut self.audio_preview {
@@ -175,16 +180,34 @@ impl F2App {
         } else if image_viewer::is_image_file(&entry.path) {
             // Image file
             self.text_preview = None;
+            self.archive_preview = None;
             if let Some(ap) = &mut self.audio_preview {
                 ap.stop();
             }
             self.audio_preview = None;
             self.stop_video_preview();
             self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
+        } else if archive_viewer::is_archive_file(&entry.path) {
+            // Archive file
+            self.text_preview = None;
+            self.image_preview = None;
+            self.image_cache.clear_wanted();
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
+            self.stop_video_preview();
+            let already_loaded = self.archive_preview.as_ref()
+                .map(|ap| ap.title == entry.name)
+                .unwrap_or(false);
+            if !already_loaded {
+                self.archive_preview = archive_viewer::ArchivePreview::load(&entry.path);
+            }
         } else {
             // Text file (fallback)
             self.image_preview = None;
             self.image_cache.clear_wanted();
+            self.archive_preview = None;
             if let Some(ap) = &mut self.audio_preview {
                 ap.stop();
             }
@@ -201,6 +224,7 @@ impl F2App {
 
     pub(crate) fn clear_all_previews(&mut self) {
         self.text_preview = None;
+        self.archive_preview = None;
         self.image_preview = None;
         self.image_cache.clear_wanted();
         if let Some(ap) = &mut self.audio_preview {
@@ -479,12 +503,13 @@ impl eframe::App for F2App {
             let left_panel = &mut self.left_panel;
             let right_panel = &mut self.right_panel;
             let text_preview = &self.text_preview;
+            let archive_preview = &self.archive_preview;
             let image_preview = &self.image_preview;
             let audio_preview = &mut self.audio_preview;
             let video_preview = &mut self.video_preview;
             let left_is_inactive = active == ActivePanel::Right;
             let right_is_inactive = active == ActivePanel::Left;
-            let has_preview = text_preview.is_some() || image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
+            let has_preview = text_preview.is_some() || archive_preview.is_some() || image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
 
             ui.columns(2, |columns| {
                 // Left panel
@@ -507,6 +532,8 @@ impl eframe::App for F2App {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
+                            } else if let Some(arp) = archive_preview.as_ref() {
+                                arp.ui(ui);
                             } else if let Some(tp) = text_preview.as_ref() {
                                 tp.ui(ui);
                             }
@@ -539,6 +566,8 @@ impl eframe::App for F2App {
                                 ap.ui(ui);
                             } else if let Some(ip) = image_preview.as_ref() {
                                 ip.ui(ui);
+                            } else if let Some(arp) = archive_preview.as_ref() {
+                                arp.ui(ui);
                             } else if let Some(tp) = text_preview.as_ref() {
                                 tp.ui(ui);
                             }

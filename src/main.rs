@@ -14,6 +14,7 @@ mod panel;
 mod shell;
 mod sort;
 mod undo;
+mod archive_viewer;
 mod audio_viewer;
 mod image_viewer;
 mod video_viewer;
