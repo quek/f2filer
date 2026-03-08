@@ -579,7 +579,8 @@ PgUp / PgDn    :  Page scroll
     // p: drive selection
     if input.p {
         use crate::file_ops::{get_drive_space, format_size_human};
-        let drives = app.drives.iter().map(|name| {
+        let drives_list = app.drives.lock().unwrap().clone();
+        let drives = drives_list.iter().map(|name| {
             let root = if name.contains(':') && !name.starts_with("WSL:") {
                 format!("{}\\", name)
             } else {

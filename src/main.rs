@@ -63,6 +63,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "f2filer",
         options,
-        Box::new(|cc| Ok(Box::new(F2App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(F2App::new(cc, config)))),
     )
 }

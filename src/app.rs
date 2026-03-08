@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
@@ -33,7 +34,7 @@ pub struct F2App {
     pub(crate) command_line: String,
     pub(crate) command_mode: bool,
     pub(crate) status_message: String,
-    pub(crate) drives: Vec<String>,
+    pub(crate) drives: Arc<Mutex<Vec<String>>>,
     pub(crate) config: Config,
     window_pos: Option<egui::Pos2>,
     window_size: Option<egui::Vec2>,
@@ -42,16 +43,23 @@ pub struct F2App {
 }
 
 impl F2App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
         // Load HackGen font
         setup_fonts(&cc.egui_ctx);
-
-        let config = Config::load();
 
         let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
         let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
 
-        let drives = file_ops::get_drives();
+        let drives = Arc::new(Mutex::new(Vec::new()));
+        {
+            let drives_handle = Arc::clone(&drives);
+            let repaint_ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                let result = file_ops::get_drives();
+                *drives_handle.lock().unwrap() = result;
+                repaint_ctx.request_repaint();
+            });
+        }
 
         F2App {
             left_panel: FilePanel::new(left_dir),
@@ -397,7 +405,8 @@ impl eframe::App for F2App {
         // Top panel: drive buttons
         egui::TopBottomPanel::top("drives").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                for drive in &self.drives.clone() {
+                let drives_snapshot = self.drives.lock().unwrap().clone();
+                for drive in &drives_snapshot {
                     if ui.button(drive).clicked() {
                         let path = self.resolve_drive_path(drive);
                         if path.exists() {
