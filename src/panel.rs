@@ -379,10 +379,12 @@ impl FilePanel {
                 }
             };
 
+            // Fixed widths for Ext, Size, Date; Name gets the rest
+            ext_w = 90.0;
+            size_w = 90.0;
+            let date_w = 145.0;
             let w = ui.available_width();
-            name_w = w * 0.40;
-            ext_w = w * 0.10;
-            size_w = w * 0.18;
+            name_w = (w - ext_w - size_w - date_w).max(100.0);
 
             if ui
                 .add_sized(
@@ -425,7 +427,7 @@ impl FilePanel {
 
             if ui
                 .add_sized(
-                    [ui.available_width(), 22.0],
+                    [date_w, 22.0],
                     egui::Button::new(
                         egui::RichText::new(format!("Date{}", sort_indicator(SortKey::Date)))
                             .strong(),
@@ -447,15 +449,13 @@ impl FilePanel {
         let row_height = 17.0;
         let visible_count = self.visible_count();
 
-        // Pre-calculate scroll offset so cursor is always visible
+        // Keep cursor centered in viewport when possible
         if is_active && visible_count > 0 && self.viewport_h > 0.0 {
-            let cursor_top = self.cursor as f32 * row_height;
-            let cursor_bottom = cursor_top + row_height;
-            if cursor_top < self.scroll_offset {
-                self.scroll_offset = cursor_top;
-            } else if cursor_bottom > self.scroll_offset + self.viewport_h {
-                self.scroll_offset = cursor_bottom - self.viewport_h;
-            }
+            let cursor_center = self.cursor as f32 * row_height + row_height * 0.5;
+            let total_h = visible_count as f32 * row_height;
+            let max_offset = (total_h - self.viewport_h).max(0.0);
+            let ideal_offset = cursor_center - self.viewport_h * 0.5;
+            self.scroll_offset = ideal_offset.clamp(0.0, max_offset);
         }
 
         // Set item_spacing.y = 0 BEFORE show_rows so it uses correct row height

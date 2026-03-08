@@ -402,26 +402,6 @@ impl eframe::App for F2App {
 
 
 
-        // Top panel: drive buttons
-        egui::TopBottomPanel::top("drives").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let drives_snapshot = self.drives.lock().unwrap().clone();
-                for drive in &drives_snapshot {
-                    if ui.button(drive).clicked() {
-                        let path = self.resolve_drive_path(drive);
-                        if path.exists() {
-                            self.active_panel_mut().navigate_to(path);
-                            self.save_config();
-                        }
-                    }
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("f2filer");
-                });
-            });
-        });
-
         // Bottom panel: status bar + command line
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             // Command line
