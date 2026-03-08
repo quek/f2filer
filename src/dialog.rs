@@ -246,13 +246,24 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
             .show(ctx, |ui| {
+                // Assign number keys to non-drive-letter items
+                let mut number_index: u32 = 1;
                 for (i, (name, space)) in drives.iter().enumerate() {
                     let is_cursor = i == dialog.cursor;
+                    // Non-drive-letter items get a number prefix
+                    let is_drive_letter = name.len() == 2 && name.ends_with(':');
+                    let display_name = if !is_drive_letter && number_index <= 9 {
+                        let label = format!("[{}] {}", number_index, name);
+                        number_index += 1;
+                        label
+                    } else {
+                        name.clone()
+                    };
                     ui.horizontal(|ui| {
                         let btn_text = if is_cursor {
-                            egui::RichText::new(name).color(egui::Color32::from_rgb(100, 180, 255)).strong()
+                            egui::RichText::new(&display_name).color(egui::Color32::from_rgb(100, 180, 255)).strong()
                         } else {
-                            egui::RichText::new(name)
+                            egui::RichText::new(&display_name)
                         };
                         if ui.button(btn_text).clicked() {
                             result = DialogResult::DriveSelected(name.clone());
@@ -292,6 +303,29 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                 let drive_name = format!("{}:", letter);
                 if drives.iter().any(|(n, _)| n == &drive_name) {
                     result = DialogResult::DriveSelected(drive_name);
+                }
+            }
+        }
+
+        // Number key shortcuts for non-drive-letter items (1-9)
+        let number_keys = [
+            egui::Key::Num1, egui::Key::Num2, egui::Key::Num3,
+            egui::Key::Num4, egui::Key::Num5, egui::Key::Num6,
+            egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+        ];
+        for (key_idx, key) in number_keys.iter().enumerate() {
+            if ctx.input(|i| i.key_pressed(*key)) {
+                // Find the (key_idx+1)-th non-drive-letter item
+                let mut count = 0u32;
+                for (name, _) in &drives {
+                    let is_drive_letter = name.len() == 2 && name.ends_with(':');
+                    if !is_drive_letter {
+                        count += 1;
+                        if count == (key_idx as u32 + 1) {
+                            result = DialogResult::DriveSelected(name.clone());
+                            break;
+                        }
+                    }
                 }
             }
         }
