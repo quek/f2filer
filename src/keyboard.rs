@@ -54,16 +54,16 @@ struct KeyState {
 fn read_key_state(ctx: &egui::Context) -> KeyState {
     ctx.input(|i| KeyState {
         tab: i.key_pressed(egui::Key::I),
-        j: i.key_pressed(egui::Key::J),
-        k: i.key_pressed(egui::Key::K),
+        j: i.key_pressed(egui::Key::J) && !i.modifiers.alt,
+        k: i.key_pressed(egui::Key::K) && !i.modifiers.alt,
         h: i.key_pressed(egui::Key::H),
         l: i.key_pressed(egui::Key::L),
         up: i.key_pressed(egui::Key::ArrowUp),
         down: i.key_pressed(egui::Key::ArrowDown),
         space: i.key_pressed(egui::Key::Space),
         insert: i.key_pressed(egui::Key::Insert),
-        home: i.key_pressed(egui::Key::Home),
-        end: i.key_pressed(egui::Key::End),
+        home: i.key_pressed(egui::Key::Home) || (i.key_pressed(egui::Key::K) && i.modifiers.alt),
+        end: i.key_pressed(egui::Key::End) || (i.key_pressed(egui::Key::J) && i.modifiers.alt),
         page_up: i.key_pressed(egui::Key::PageUp),
         page_down: i.key_pressed(egui::Key::PageDown),
         c: i.key_pressed(egui::Key::C) && !i.modifiers.ctrl,
@@ -77,7 +77,7 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         ctrl_r: i.key_pressed(egui::Key::R) && i.modifiers.ctrl,
         q: i.key_pressed(egui::Key::Q) && !i.modifiers.ctrl,
         ctrl_q: i.key_pressed(egui::Key::Q) && i.modifiers.ctrl,
-        period: i.key_pressed(egui::Key::Period) && i.modifiers.ctrl,
+        period: i.key_pressed(egui::Key::Period) && i.modifiers.is_none(),
         colon: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == ":")),
         question: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "?")),
         p: i.key_pressed(egui::Key::P),
@@ -190,9 +190,14 @@ fn handle_navigation(app: &mut F2App, input: &KeyState) {
         app.active_panel_mut().move_cursor(1);
     }
 
-    // a: select all
+    // a: toggle select all / deselect all
     if input.a {
-        app.active_panel_mut().select_all();
+        let panel = app.active_panel_mut();
+        if panel.selected.is_empty() {
+            panel.select_all();
+        } else {
+            panel.deselect_all();
+        }
     }
 }
 
@@ -541,7 +546,7 @@ e              :  Open with text editor
 h              :  Parent directory
 i              :  Switch panel
 Space          :  Toggle select
-Ctrl+A         :  Select all
+a              :  Toggle select all / deselect
 f              :  Focus filter
 o              :  Sync opposite panel
 c              :  Copy selected → opposite
@@ -562,9 +567,9 @@ z              :  Undo last operation
 Shift+Z        :  Redo
 v              :  Preview (text/image/audio/video)
 Ctrl+R         :  Refresh
-Ctrl+.         :  Toggle hidden files
+.              :  Toggle hidden files
 Ctrl+Q         :  Quit
-Home / End     :  Jump to top / bottom
+Alt+k / Alt+j  :  Jump to top / bottom
 PgUp / PgDn    :  Page scroll
 ?              :  This help"
                 .to_string(),

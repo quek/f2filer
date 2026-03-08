@@ -212,7 +212,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .open(&mut open)
             .max_height(400.0)
             .show(ctx, |ui| {
-                ui.set_min_width(300.0);
+                ui.set_min_width(500.0);
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
                     .show(ui, |ui| {

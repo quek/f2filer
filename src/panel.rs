@@ -103,6 +103,8 @@ pub struct FilePanel {
     pub drag_request: Option<Vec<PathBuf>>,
     pub drop_highlight: bool,
     pub clicked: bool,
+    scroll_offset: f32,
+    viewport_h: f32,
 }
 
 impl FilePanel {
@@ -115,13 +117,15 @@ impl FilePanel {
             sort_key: SortKey::Name,
             sort_order: SortOrder::Ascending,
             filter: String::new(),
-            show_hidden: false,
+            show_hidden: true,
             filtered_indices: Vec::new(),
             focus_filter: false,
             filter_has_focus: false,
             drag_request: None,
             drop_highlight: false,
             clicked: false,
+            scroll_offset: 0.0,
+            viewport_h: 0.0,
         };
         panel.refresh();
         panel
@@ -443,11 +447,25 @@ impl FilePanel {
         let row_height = 17.0;
         let visible_count = self.visible_count();
 
+        // Pre-calculate scroll offset so cursor is always visible
+        if is_active && visible_count > 0 && self.viewport_h > 0.0 {
+            let cursor_top = self.cursor as f32 * row_height;
+            let cursor_bottom = cursor_top + row_height;
+            if cursor_top < self.scroll_offset {
+                self.scroll_offset = cursor_top;
+            } else if cursor_bottom > self.scroll_offset + self.viewport_h {
+                self.scroll_offset = cursor_bottom - self.viewport_h;
+            }
+        }
+
+        // Set item_spacing.y = 0 BEFORE show_rows so it uses correct row height
+        ui.spacing_mut().item_spacing.y = 0.0;
+
         let scroll_output = egui::ScrollArea::vertical()
             .id_salt(panel_id.with("scroll"))
             .auto_shrink([false; 2])
+            .vertical_scroll_offset(self.scroll_offset)
             .show_rows(ui, row_height, visible_count, |ui, row_range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
                 for vis_idx in row_range {
                     if vis_idx >= visible_count {
                         break;
@@ -579,35 +597,9 @@ impl FilePanel {
                 }
             });
 
-        // Ensure cursor is visible — scroll_to_rect inside show_rows only works
-        // for rows already in the rendered range; when cursor jumps off-screen
-        // (End, Home, wrap-around) we adjust the scroll offset directly.
-        if is_active && visible_count > 0 {
-            let spacing_y = 0.0_f32; // matches item_spacing.y inside scroll area
-            let row_h = row_height + spacing_y;
-            let cursor_top = self.cursor as f32 * row_h;
-            let cursor_bottom = cursor_top + row_height;
-            let offset = scroll_output.state.offset.y;
-            let viewport_h = scroll_output.inner_rect.height();
-
-            let new_offset = if cursor_top < offset {
-                // Cursor is above viewport — scroll up
-                cursor_top
-            } else if cursor_bottom > offset + viewport_h {
-                // Cursor is below viewport — scroll down
-                cursor_bottom - viewport_h
-            } else {
-                offset
-            };
-
-            if (new_offset - offset).abs() > 0.5 {
-                let mut state = scroll_output.state;
-                let total_h = visible_count as f32 * row_h - spacing_y;
-                let max_off = (total_h - viewport_h).max(0.0);
-                state.offset.y = new_offset.clamp(0.0, max_off);
-                state.store(ui.ctx(), scroll_output.id);
-            }
-        }
+        // Track scroll state for next frame (also captures mouse wheel scrolling)
+        self.scroll_offset = scroll_output.state.offset.y;
+        self.viewport_h = scroll_output.inner_rect.height();
 
         // Drop highlight overlay
         if self.drop_highlight {

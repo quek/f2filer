@@ -31,7 +31,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            show_hidden: false,
+            show_hidden: true,
             last_left_dir: None,
             last_right_dir: None,
             drive_dirs: HashMap::new(),
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn config_default_values() {
         let config = Config::default();
-        assert!(!config.show_hidden);
+        assert!(config.show_hidden);
         assert!(config.last_left_dir.is_none());
         assert!(config.last_right_dir.is_none());
         assert!(config.drive_dirs.is_empty());
