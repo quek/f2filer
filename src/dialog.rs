@@ -129,23 +129,18 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let message = dialog.message.clone();
         let mut open = true;
 
-        // Use up to 60% of available width for confirm dialogs
-        let max_w = ctx.screen_rect().width() * 0.6;
-        let min_w = 300.0_f32.min(max_w);
+        let screen = ctx.screen_rect();
         egui::Window::new(&title)
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .vscroll(true)
+            .default_pos(screen.center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_width(300.0)
             .open(&mut open)
-            .max_width(max_w)
-            .max_height(400.0)
             .show(ctx, |ui| {
-                ui.set_min_width(min_w);
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        ui.label(&message);
-                    });
+                ui.label(&message);
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui.button("Yes (y)").clicked() {
@@ -178,9 +173,12 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let mut open = true;
 
         egui::Window::new(&title)
+
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .default_pos(ctx.screen_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
                 let output = egui::TextEdit::singleline(&mut dialog.value)
@@ -233,20 +231,19 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let message = dialog.message.clone();
         let mut open = true;
 
+        let screen = ctx.screen_rect();
         egui::Window::new(&title)
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .vscroll(true)
+            .default_pos(screen.center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_width(500.0)
+            .default_height(screen.height() * 0.8)
             .open(&mut open)
-            .max_height(400.0)
             .show(ctx, |ui| {
-                ui.set_min_width(500.0);
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        ui.label(&message);
-                    });
+                ui.label(&message);
                 ui.add_space(10.0);
                 if ui.button("OK").clicked() {
                     result = DialogResult::Closed;
@@ -270,9 +267,12 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let mut open = true;
 
         egui::Window::new("Select Drive")
+
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .default_pos(ctx.screen_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
                 // Assign number keys to non-drive-letter items
@@ -374,8 +374,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
 
         egui::Window::new("Registered Directories")
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .default_pos(ctx.screen_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
                 if dialog.dirs.is_empty() {
@@ -455,8 +457,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         } else {
             egui::Window::new(&op_label)
                 .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(true)
+                .constrain(true)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.set_min_width(300.0);
                     ui.label(format!("{} / {}", completed, total));
@@ -487,13 +491,17 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     if let Some(dialog) = &mut state.settings {
         let mut open = true;
 
+        let screen = ctx.screen_rect();
         egui::Window::new("Settings")
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .constrain(true)
+            .default_pos(screen.center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_width(400.0)
+            .default_height(screen.height() * 0.7)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.set_min_width(400.0);
                 ui.label(format!("Font: {}", dialog.current_font));
 
                 // Filter input
@@ -522,8 +530,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                     dialog.cursor = filtered.len().saturating_sub(1);
                 }
 
+                // Dynamically compute scroll area height from available window space
+                let scroll_h = (ui.available_height() - 8.0).max(100.0);
                 egui::ScrollArea::vertical()
-                    .max_height(400.0)
+                    .max_height(scroll_h)
                     .show(ui, |ui| {
                         for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
                             let is_cursor = list_idx == dialog.cursor;

@@ -54,6 +54,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - **UIスレッドで `path.exists()` や `fs::metadata()` など I/O ブロッキング呼び出しを行わないこと。** HDD/ネットワーク/WSL ドライブでは数秒かかる場合がある。`navigate_to_with_resolver` でパス解決も含めてバックグラウンドで実行する
 - ディレクトリの自動リフレッシュは `fs::metadata().modified()` の mtime ポーリング（2秒間隔）で実現。カーソル位置・選択状態はファイル名で復元
 - ディレクトリ毎のカーソル位置は `cursor_history` でファイル名ベースで保存し、再訪・再起動時に復元。`cursor_dirty` で変更追跡し、両パネル間の上書きを防止。`loading_old_name` は上方向移動時のみ設定
+- egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。Message/Confirm は Window の `vscroll(true)` に任せ内側 ScrollArea は不要。Settings のようにスクロール外に固定要素がある場合のみ内側 ScrollArea + `max_height(ui.available_height() - margin)` を使う
 
 ## Coding Principles
 
@@ -86,6 +87,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 ### 関数のスコープを設計意図に一致させる
 - 「特定の条件でのみ有効な値」を常に設定すると、意図しないコンテキストで副作用が発生する。条件分岐で設定スコープを制約する
 - センチネル値（`".."` など）を通常データと同じ経路で永続化しない。保存前にバリデーションを行う
+
+### 外部 API の挙動を先に理解する
+- ライブラリの API を組み合わせる前に、各 API の実際の挙動（ドキュメント・ソースコード）を調査する
+- 推測で実装→失敗→修正のサイクルは、調査→実装より遅く、副作用で別の箇所を壊すリスクがある
 
 ### Security
 - ユーザー入力のパスは必ず検証する
