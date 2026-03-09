@@ -276,24 +276,28 @@ impl F2App {
         // Save per-directory cursor positions (only entries modified this session)
         for panel in [&self.left_panel, &self.right_panel] {
             for dir in &panel.cursor_dirty {
+                let dir_str = dir.to_string_lossy().to_string();
                 if let Some(name) = panel.cursor_history.get(dir as &PathBuf) {
-                    self.config
-                        .cursor_dirs
-                        .insert(dir.to_string_lossy().to_string(), name.clone());
+                    self.config.cursor_dirs.insert(dir_str.clone(), name.clone());
                 }
+                self.config.touch_dir(&dir_str);
             }
         }
         // Save per-directory sort state (only entries modified this session)
         for panel in [&self.left_panel, &self.right_panel] {
             for dir in &panel.sort_dirty {
+                let dir_str = dir.to_string_lossy().to_string();
                 if let Some(&(key, order)) = panel.sort_history.get(dir) {
                     self.config.sort_dirs.insert(
-                        dir.to_string_lossy().to_string(),
+                        dir_str.clone(),
                         crate::sort::sort_to_string(key, order),
                     );
                 }
+                self.config.touch_dir(&dir_str);
             }
         }
+        // Trim old directory history entries
+        self.config.trim_dir_history();
         // Save window position and size
         if let Some(pos) = self.window_pos {
             self.config.window_x = Some(pos.x);

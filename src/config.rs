@@ -30,6 +30,9 @@ pub struct Config {
     pub cursor_dirs: HashMap<String, String>,
     #[serde(default)]
     pub sort_dirs: HashMap<String, String>,
+    /// LRU order of accessed directories (most recent at end).
+    #[serde(default)]
+    pub dir_access_order: Vec<String>,
     #[serde(default)]
     pub font_path: Option<String>,
     #[serde(default)]
@@ -50,6 +53,7 @@ impl Default for Config {
             registered_dirs: Vec::new(),
             cursor_dirs: HashMap::new(),
             sort_dirs: HashMap::new(),
+            dir_access_order: Vec::new(),
             font_path: None,
             font_size: None,
         }
@@ -72,6 +76,26 @@ impl Config {
         } else {
             Config::default()
         }
+    }
+
+    const MAX_DIR_HISTORY: usize = 1000;
+
+    /// Record a directory access, moving it to the end (most recent) of the LRU list.
+    pub fn touch_dir(&mut self, dir: &str) {
+        self.dir_access_order.retain(|d| d != dir);
+        self.dir_access_order.push(dir.to_string());
+    }
+
+    /// Trim cursor_dirs and sort_dirs to keep only the most recent MAX_DIR_HISTORY entries.
+    pub fn trim_dir_history(&mut self) {
+        if self.dir_access_order.len() <= Self::MAX_DIR_HISTORY {
+            return;
+        }
+        let remove_count = self.dir_access_order.len() - Self::MAX_DIR_HISTORY;
+        let to_remove: std::collections::HashSet<String> =
+            self.dir_access_order.drain(..remove_count).collect();
+        self.cursor_dirs.retain(|k, _| !to_remove.contains(k));
+        self.sort_dirs.retain(|k, _| !to_remove.contains(k));
     }
 
     pub fn save(&self) {
