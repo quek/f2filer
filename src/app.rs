@@ -10,6 +10,7 @@ use crate::file_item;
 use crate::file_ops;
 use crate::audio_viewer::{self, AudioPreview};
 use crate::image_viewer::{self, ImageCache, ImagePreview};
+use crate::keybind::KeyBindings;
 use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
 use crate::undo::UndoHistory;
@@ -43,6 +44,7 @@ pub struct F2App {
     pub(crate) undo_history: UndoHistory,
     skip_next_drop: bool,
     pub(crate) sort_pending: bool,
+    pub(crate) keybindings: KeyBindings,
 }
 
 impl F2App {
@@ -90,6 +92,11 @@ impl F2App {
         left_panel.restore_sort_from_history();
         right_panel.restore_sort_from_history();
 
+        let keybindings = match &config.keybindings_override {
+            Some(overrides) => KeyBindings::merge_with_defaults(overrides),
+            None => KeyBindings::defaults(),
+        };
+
         F2App {
             left_panel,
             right_panel,
@@ -112,6 +119,7 @@ impl F2App {
             undo_history: UndoHistory::new(),
             skip_next_drop: false,
             sort_pending: false,
+            keybindings,
         }
     }
 
@@ -901,29 +909,49 @@ mod tests {
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub(crate) fn setup_fonts(ctx: &egui::Context, font_path: Option<&str>, font_size: Option<f32>) {
+    let mut fonts = egui::FontDefinitions::default();
+    let mut needs_update = false;
+
+    // Load custom font if specified
     if let Some(path) = font_path {
         if let Ok(font_data) = std::fs::read(path) {
-            let mut fonts = egui::FontDefinitions::default();
-
             fonts.font_data.insert(
                 "CustomFont".to_string(),
                 egui::FontData::from_owned(font_data).into(),
             );
-
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "CustomFont".to_string());
-
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .insert(0, "CustomFont".to_string());
-
-            ctx.set_fonts(fonts);
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts.families.entry(family).or_default().insert(0, "CustomFont".to_string());
+            }
+            needs_update = true;
         }
+    }
+
+    // Load Japanese system font as primary (or after custom font).
+    // When a custom font is set: CustomFont → JapaneseFont → built-in
+    // When no custom font:       JapaneseFont → built-in
+    let jp_font_candidates = [
+        r"C:\Windows\Fonts\meiryo.ttc",
+        r"C:\Windows\Fonts\YuGothR.ttc",
+        r"C:\Windows\Fonts\msgothic.ttc",
+    ];
+    for jp_path in &jp_font_candidates {
+        if let Ok(data) = std::fs::read(jp_path) {
+            fonts.font_data.insert(
+                "JapaneseFont".to_string(),
+                egui::FontData::from_owned(data).into(),
+            );
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                let list = fonts.families.entry(family).or_default();
+                let pos = list.iter().position(|n| n == "CustomFont").map_or(0, |i| i + 1);
+                list.insert(pos, "JapaneseFont".to_string());
+            }
+            needs_update = true;
+            break;
+        }
+    }
+
+    if needs_update {
+        ctx.set_fonts(fonts);
     }
 
     apply_font_size(ctx, font_size);

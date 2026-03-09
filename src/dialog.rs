@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::config::RegisteredDir;
 use crate::file_ops;
+use crate::keybind::{Action, KeyBinding, KeyBindings, ACTION_DISPLAY_ORDER};
 
 #[derive(Default)]
 pub struct DialogState {
@@ -99,12 +100,80 @@ pub struct RegisteredDirDialog {
     pub cursor: usize,
 }
 
+#[derive(Default, PartialEq)]
+pub enum SettingsSection {
+    Font,
+    #[default]
+    Keybindings,
+}
+
+/// Pending conflict info: the user pressed a key that's already bound to another action.
+pub struct KbConflict {
+    pub binding: KeyBinding,
+    pub target_idx: usize,                  // action index where we want to add
+    pub conflicts: Vec<(usize, String)>,    // (action_idx, action_description)
+}
+
 pub struct SettingsDialog {
+    pub section: SettingsSection,
+    // --- Shared ---
+    pub scroll_id: u64,  // unique per dialog instance (resets scroll position)
+    // --- Font section ---
     pub fonts: Vec<(String, String)>, // (display_name, full_path)
     pub cursor: usize,
     pub filter: String,
     pub filter_has_focus: bool,
     pub current_font: String, // display name of current font
+    // --- Keybindings section ---
+    pub kb_actions: Vec<(Action, String, Vec<KeyBinding>)>, // (action, description, current_bindings)
+    pub kb_cursor: usize,
+    pub kb_filter: String,
+    pub kb_editing: bool,           // waiting for key input (capture mode)
+    pub kb_customized: Vec<bool>,   // per-action: true if differs from default
+    pub kb_expanded: bool,          // true if showing individual bindings for selected action
+    pub kb_sub_cursor: usize,       // cursor within expanded bindings (last = "Add new")
+    pub kb_conflict: Option<KbConflict>,  // pending conflict confirmation
+}
+
+impl SettingsDialog {
+    pub fn new(fonts: Vec<(String, String)>, current_font: String, keybindings: &KeyBindings) -> Self {
+        let kb_actions: Vec<(Action, String, Vec<KeyBinding>)> = ACTION_DISPLAY_ORDER
+            .iter()
+            .map(|&action| {
+                let desc = action.description().to_string();
+                let bindings = keybindings.bindings.get(&action).cloned().unwrap_or_default();
+                (action, desc, bindings)
+            })
+            .collect();
+        let kb_customized: Vec<bool> = ACTION_DISPLAY_ORDER
+            .iter()
+            .map(|&action| keybindings.is_customized(action))
+            .collect();
+        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scroll_id = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        SettingsDialog {
+            section: SettingsSection::default(),
+            scroll_id,
+            fonts,
+            cursor: 0,
+            filter: String::new(),
+            filter_has_focus: false,
+            current_font,
+            kb_actions,
+            kb_cursor: 0,
+            kb_filter: String::new(),
+            kb_editing: false,
+            kb_customized,
+            kb_expanded: false,
+            kb_sub_cursor: 0,
+            kb_conflict: None,
+        }
+    }
+
+    /// Get display string for bindings of an action at the given index.
+    fn bindings_display(bindings: &[KeyBinding]) -> String {
+        bindings.iter().map(|b| b.display()).collect::<Vec<_>>().join(" / ")
+    }
 }
 
 pub enum DialogResult {
@@ -116,6 +185,9 @@ pub enum DialogResult {
     RegisteredDirDeleted(usize),
     RegisteredDirEditKey(usize),
     FontSelected(Option<String>), // None = default, Some(path) = custom font
+    KeybindingChanged(Action, Vec<KeyBinding>),
+    KeybindingBatchChanged(Vec<(Action, Vec<KeyBinding>)>),
+    KeybindingReset(Action),
     ProgressFinished,
     Closed,
 }
@@ -487,7 +559,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
     }
 
-    // Settings dialog (font selection)
+    // Settings dialog (font selection + keybindings)
     if let Some(dialog) = &mut state.settings {
         let mut open = true;
 
@@ -498,77 +570,45 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .constrain(true)
             .default_pos(screen.center())
             .pivot(egui::Align2::CENTER_CENTER)
-            .default_width(400.0)
+            .default_width(500.0)
             .default_height(screen.height() * 0.7)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label(format!("Font: {}", dialog.current_font));
+                // Tab buttons
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(dialog.section == SettingsSection::Keybindings, "Keybindings").clicked() {
+                        dialog.section = SettingsSection::Keybindings;
+                    }
+                    if ui.selectable_label(dialog.section == SettingsSection::Font, "Font").clicked() {
+                        dialog.section = SettingsSection::Font;
+                    }
+                });
+                ui.separator();
 
-                // Filter input
-                let filter_response = ui.add(
-                    egui::TextEdit::singleline(&mut dialog.filter)
-                        .hint_text("Filter...")
-                        .desired_width(380.0),
-                );
-                if dialog.filter_has_focus {
-                    filter_response.request_focus();
-                    dialog.filter_has_focus = false;
-                }
-                let filter_focused = filter_response.has_focus();
-
-                ui.add_space(4.0);
-
-                // Build filtered list: (Default) + matching fonts
-                let filter_lower = dialog.filter.to_lowercase();
-                let filtered: Vec<(usize, &str, &str)> = std::iter::once((usize::MAX, "(Default)", ""))
-                    .chain(dialog.fonts.iter().enumerate().map(|(i, (name, path))| (i, name.as_str(), path.as_str())))
-                    .filter(|(_, name, _)| filter_lower.is_empty() || name.to_lowercase().contains(&filter_lower))
-                    .collect();
-
-                // Clamp cursor
-                if dialog.cursor >= filtered.len() {
-                    dialog.cursor = filtered.len().saturating_sub(1);
+                // Tab key to switch sections (when not editing and filter not focused)
+                if !dialog.kb_editing {
+                    if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+                        dialog.section = match dialog.section {
+                            SettingsSection::Font => SettingsSection::Keybindings,
+                            SettingsSection::Keybindings => SettingsSection::Font,
+                        };
+                    }
                 }
 
-                // Dynamically compute scroll area height from available window space
-                let scroll_h = (ui.available_height() - 8.0).max(100.0);
-                egui::ScrollArea::vertical()
-                    .max_height(scroll_h)
-                    .show(ui, |ui| {
-                        for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
-                            let is_cursor = list_idx == dialog.cursor;
-                            let text = if is_cursor {
-                                egui::RichText::new(*name)
-                                    .color(egui::Color32::from_rgb(100, 180, 255))
-                                    .strong()
-                            } else {
-                                egui::RichText::new(*name)
-                            };
-                            if ui.button(text).clicked() {
-                                let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
-                                result = DialogResult::FontSelected(font_path);
-                            }
-                        }
-                    });
-
-                // Keyboard navigation (only when filter is not focused)
-                if !filter_focused && !filtered.is_empty() {
-                    if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
-                        dialog.cursor = (dialog.cursor + 1) % filtered.len();
+                match dialog.section {
+                    SettingsSection::Font => {
+                        show_settings_font_tab(ctx, ui, dialog, &mut result);
                     }
-                    if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
-                        dialog.cursor = (dialog.cursor + filtered.len() - 1) % filtered.len();
-                    }
-                    if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
-                        if let Some((_, _, path)) = filtered.get(dialog.cursor) {
-                            let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
-                            result = DialogResult::FontSelected(font_path);
-                        }
+                    SettingsSection::Keybindings => {
+                        show_settings_keybindings_tab(ctx, ui, dialog, &mut result);
                     }
                 }
             });
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Escape closes dialog (unless editing or confirming conflict)
+        if !dialog.kb_editing && dialog.kb_conflict.is_none()
+            && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+        {
             result = DialogResult::Closed;
         }
 
@@ -607,6 +647,11 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         DialogResult::InputOk(_, _) => {
             state.input = None;
         }
+        DialogResult::KeybindingChanged(_, _)
+        | DialogResult::KeybindingBatchChanged(_)
+        | DialogResult::KeybindingReset(_) => {
+            // Don't close settings dialog — stay on keybindings tab
+        }
         DialogResult::ProgressFinished => {
             // Don't clear here — handle_dialog_result takes it via .take()
         }
@@ -614,6 +659,373 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     }
 
     result
+}
+
+fn show_settings_font_tab(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    dialog: &mut SettingsDialog,
+    result: &mut DialogResult,
+) {
+    ui.label(format!("Font: {}", dialog.current_font));
+
+    // Filter input
+    let filter_response = ui.add(
+        egui::TextEdit::singleline(&mut dialog.filter)
+            .hint_text("Filter...")
+            .desired_width(ui.available_width() - 8.0),
+    );
+    if dialog.filter_has_focus {
+        filter_response.request_focus();
+        dialog.filter_has_focus = false;
+    }
+    let filter_focused = filter_response.has_focus();
+
+    ui.add_space(4.0);
+
+    // Build filtered list: (Default) + matching fonts
+    let filter_lower = dialog.filter.to_lowercase();
+    let filtered: Vec<(usize, &str, &str)> = std::iter::once((usize::MAX, "(Default)", ""))
+        .chain(dialog.fonts.iter().enumerate().map(|(i, (name, path))| (i, name.as_str(), path.as_str())))
+        .filter(|(_, name, _)| filter_lower.is_empty() || name.to_lowercase().contains(&filter_lower))
+        .collect();
+
+    // Clamp cursor
+    if dialog.cursor >= filtered.len() {
+        dialog.cursor = filtered.len().saturating_sub(1);
+    }
+
+    // Dynamically compute scroll area height from available window space
+    let scroll_h = (ui.available_height() - 8.0).max(100.0);
+    egui::ScrollArea::vertical()
+        .id_salt(egui::Id::new("font_scroll").with(dialog.scroll_id))
+        .max_height(scroll_h)
+        .show(ui, |ui| {
+            for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
+                let is_cursor = list_idx == dialog.cursor;
+                let text = if is_cursor {
+                    egui::RichText::new(*name)
+                        .color(egui::Color32::from_rgb(100, 180, 255))
+                        .strong()
+                } else {
+                    egui::RichText::new(*name)
+                };
+                if ui.button(text).clicked() {
+                    let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
+                    *result = DialogResult::FontSelected(font_path);
+                }
+            }
+        });
+
+    // Keyboard navigation (only when filter is not focused)
+    if !filter_focused && !filtered.is_empty() {
+        if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+            dialog.cursor = (dialog.cursor + 1) % filtered.len();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+            dialog.cursor = (dialog.cursor + filtered.len() - 1) % filtered.len();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
+            if let Some((_, _, path)) = filtered.get(dialog.cursor) {
+                let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
+                *result = DialogResult::FontSelected(font_path);
+            }
+        }
+    }
+}
+
+fn show_settings_keybindings_tab(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    dialog: &mut SettingsDialog,
+    result: &mut DialogResult,
+) {
+    // --- Conflict confirmation mode ---
+    if let Some(conflict) = &dialog.kb_conflict {
+        let conflict_names: Vec<&str> = conflict.conflicts.iter().map(|(_, desc)| desc.as_str()).collect();
+        ui.label(
+            egui::RichText::new(format!(
+                "「{}」は以下に割り当て済みです:\n  {}\n\n除去して割り当てますか？",
+                conflict.binding.display(),
+                conflict_names.join(", ")
+            ))
+            .strong(),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Enter: はい  /  Esc: キャンセル");
+        });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            // Confirmed: remove from conflicts, add to target
+            let conflict = dialog.kb_conflict.take().unwrap();
+            let mut batch: Vec<(Action, Vec<KeyBinding>)> = Vec::new();
+            for (conflict_idx, _) in &conflict.conflicts {
+                dialog.kb_actions[*conflict_idx].2.retain(|b| b != &conflict.binding);
+                dialog.kb_customized[*conflict_idx] = true;
+                let action = dialog.kb_actions[*conflict_idx].0;
+                let cloned = dialog.kb_actions[*conflict_idx].2.clone();
+                batch.push((action, cloned));
+            }
+            if !dialog.kb_actions[conflict.target_idx].2.contains(&conflict.binding) {
+                dialog.kb_actions[conflict.target_idx].2.push(conflict.binding);
+            }
+            dialog.kb_customized[conflict.target_idx] = true;
+            dialog.kb_sub_cursor = dialog.kb_actions[conflict.target_idx].2.len() - 1;
+            let target_action = dialog.kb_actions[conflict.target_idx].0;
+            let target_bindings = dialog.kb_actions[conflict.target_idx].2.clone();
+            batch.push((target_action, target_bindings));
+            *result = DialogResult::KeybindingBatchChanged(batch);
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            dialog.kb_conflict = None;
+        }
+        return;
+    }
+
+    // --- Key capture mode ---
+    if dialog.kb_editing {
+        ui.label(egui::RichText::new("キーを押してください (Esc: キャンセル)").strong());
+        ui.add_space(4.0);
+
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            dialog.kb_editing = false;
+            return;
+        }
+
+        let new_binding = ctx.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+                    return Some(KeyBinding::from_key_event(*key, modifiers));
+                }
+            }
+            None
+        });
+
+        if let Some(binding) = new_binding {
+            dialog.kb_editing = false;
+            let filter_lower = dialog.kb_filter.to_lowercase();
+            let filtered_indices: Vec<usize> = kb_filtered_indices(&dialog.kb_actions, &filter_lower);
+            if let Some(&actual_idx) = filtered_indices.get(dialog.kb_cursor) {
+                // Check for conflicts with other actions
+                let conflicts: Vec<(usize, String)> = dialog.kb_actions.iter().enumerate()
+                    .filter(|(idx, (_, _, bindings))| {
+                        *idx != actual_idx && bindings.contains(&binding)
+                    })
+                    .map(|(idx, (_, desc, _))| (idx, desc.clone()))
+                    .collect();
+
+                if conflicts.is_empty() {
+                    // No conflict: add directly
+                    let action = dialog.kb_actions[actual_idx].0;
+                    let bindings = &mut dialog.kb_actions[actual_idx].2;
+                    if !bindings.contains(&binding) {
+                        bindings.push(binding);
+                    }
+                    dialog.kb_customized[actual_idx] = true;
+                    dialog.kb_sub_cursor = bindings.len() - 1;
+                    *result = DialogResult::KeybindingChanged(action, bindings.clone());
+                } else {
+                    // Conflict detected: show confirmation
+                    dialog.kb_conflict = Some(KbConflict {
+                        binding,
+                        target_idx: actual_idx,
+                        conflicts,
+                    });
+                }
+            }
+        }
+        return;
+    }
+
+    // --- Usage instructions ---
+    ui.label(
+        egui::RichText::new("j/k:選択  Enter:展開  d:デフォルトに戻す  Esc:閉じる")
+            .small()
+            .color(egui::Color32::from_rgb(140, 140, 140)),
+    );
+    ui.label(
+        egui::RichText::new("展開中: x/Del:削除  Enter(+Add):追加  * はカスタム")
+            .small()
+            .color(egui::Color32::from_rgb(140, 140, 140)),
+    );
+    ui.add_space(2.0);
+
+    // --- Filter input ---
+    let filter_response = ui.add(
+        egui::TextEdit::singleline(&mut dialog.kb_filter)
+            .hint_text("Filter...")
+            .desired_width(ui.available_width() - 8.0),
+    );
+    let filter_focused = filter_response.has_focus();
+
+    ui.add_space(4.0);
+
+    // Build filtered list
+    let filter_lower = dialog.kb_filter.to_lowercase();
+    let filtered_indices: Vec<usize> = kb_filtered_indices(&dialog.kb_actions, &filter_lower);
+
+    // Clamp cursor
+    if dialog.kb_cursor >= filtered_indices.len() {
+        dialog.kb_cursor = filtered_indices.len().saturating_sub(1);
+    }
+
+    // --- Scroll area ---
+    let scroll_h = (ui.available_height() - 8.0).max(100.0);
+    egui::ScrollArea::vertical()
+        .id_salt(egui::Id::new("kb_scroll").with(dialog.scroll_id))
+        .max_height(scroll_h)
+        .show(ui, |ui| {
+            for (list_idx, &actual_idx) in filtered_indices.iter().enumerate() {
+                let is_cursor = list_idx == dialog.kb_cursor;
+                let (_, desc, bindings) = &dialog.kb_actions[actual_idx];
+                let customized = dialog.kb_customized[actual_idx];
+                let keys_display = SettingsDialog::bindings_display(bindings);
+                let is_expanded = is_cursor && dialog.kb_expanded;
+
+                // Main action row
+                let marker = if customized { "* " } else { "  " };
+                let label = format!("{}{:<30} {}", marker, desc, keys_display);
+                let text = if is_cursor && customized {
+                    egui::RichText::new(&label)
+                        .color(egui::Color32::from_rgb(100, 180, 255))
+                        .strong()
+                } else if is_cursor {
+                    egui::RichText::new(&label)
+                        .color(egui::Color32::from_rgb(100, 180, 255))
+                } else if customized {
+                    egui::RichText::new(&label).strong()
+                } else {
+                    egui::RichText::new(&label)
+                };
+                ui.label(text);
+
+                // Expanded view: show individual bindings + "Add new"
+                if is_expanded {
+                    let total_sub_items = bindings.len() + 1; // bindings + "Add new"
+                    for (bind_idx, binding) in bindings.iter().enumerate() {
+                        let is_sub_cursor = dialog.kb_sub_cursor == bind_idx;
+                        let bind_label = format!("      {} {}", if is_sub_cursor { ">" } else { " " }, binding.display());
+                        let bind_text = if is_sub_cursor {
+                            egui::RichText::new(&bind_label)
+                                .color(egui::Color32::from_rgb(255, 200, 100))
+                        } else {
+                            egui::RichText::new(&bind_label)
+                                .color(egui::Color32::from_rgb(180, 180, 180))
+                        };
+                        ui.label(bind_text);
+                    }
+                    // "Add new" row
+                    let is_add_cursor = dialog.kb_sub_cursor == bindings.len();
+                    let add_label = format!("      {} + Add new binding", if is_add_cursor { ">" } else { " " });
+                    let add_text = if is_add_cursor {
+                        egui::RichText::new(&add_label)
+                            .color(egui::Color32::from_rgb(255, 200, 100))
+                    } else {
+                        egui::RichText::new(&add_label)
+                            .color(egui::Color32::from_rgb(120, 180, 120))
+                    };
+                    ui.label(add_text);
+
+                    // Clamp sub_cursor
+                    if dialog.kb_sub_cursor >= total_sub_items {
+                        dialog.kb_sub_cursor = total_sub_items.saturating_sub(1);
+                    }
+                }
+            }
+        });
+
+    // --- Keyboard navigation ---
+    if !filter_focused && !filtered_indices.is_empty() {
+        if dialog.kb_expanded {
+            // Expanded mode navigation
+            let actual_idx = filtered_indices[dialog.kb_cursor];
+            let bindings_len = dialog.kb_actions[actual_idx].2.len();
+            let total_sub = bindings_len + 1; // bindings + "Add new"
+
+            if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+                dialog.kb_sub_cursor = (dialog.kb_sub_cursor + 1) % total_sub;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+                dialog.kb_sub_cursor = (dialog.kb_sub_cursor + total_sub - 1) % total_sub;
+            }
+            // Enter: add new binding (if on "Add new" row)
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if dialog.kb_sub_cursor == bindings_len {
+                    dialog.kb_editing = true;
+                }
+            }
+            // Delete / x: remove selected binding
+            if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::X)) {
+                if dialog.kb_sub_cursor < bindings_len && bindings_len > 0 {
+                    let action = dialog.kb_actions[actual_idx].0;
+                    dialog.kb_actions[actual_idx].2.remove(dialog.kb_sub_cursor);
+                    dialog.kb_customized[actual_idx] = true;
+                    let new_len = dialog.kb_actions[actual_idx].2.len();
+                    if dialog.kb_sub_cursor >= new_len && new_len > 0 {
+                        dialog.kb_sub_cursor = new_len - 1;
+                    } else if new_len == 0 {
+                        dialog.kb_sub_cursor = 0;
+                    }
+                    *result = DialogResult::KeybindingChanged(action, dialog.kb_actions[actual_idx].2.clone());
+                }
+            }
+            // Escape: collapse back to action list
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                dialog.kb_expanded = false;
+            }
+            // d: reset to default
+            if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+                let action = dialog.kb_actions[actual_idx].0;
+                let defaults = KeyBindings::defaults();
+                let default_bindings = defaults.bindings.get(&action).cloned().unwrap_or_default();
+                dialog.kb_actions[actual_idx].2 = default_bindings;
+                dialog.kb_customized[actual_idx] = false;
+                dialog.kb_sub_cursor = 0;
+                *result = DialogResult::KeybindingReset(action);
+            }
+        } else {
+            // Action list navigation
+            if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+                dialog.kb_cursor = (dialog.kb_cursor + 1) % filtered_indices.len();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+                dialog.kb_cursor = (dialog.kb_cursor + filtered_indices.len() - 1) % filtered_indices.len();
+            }
+            // Enter: expand to show individual bindings
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                dialog.kb_expanded = true;
+                dialog.kb_sub_cursor = 0;
+            }
+            // d: reset to default
+            if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+                if let Some(&actual_idx) = filtered_indices.get(dialog.kb_cursor) {
+                    let action = dialog.kb_actions[actual_idx].0;
+                    let defaults = KeyBindings::defaults();
+                    let default_bindings = defaults.bindings.get(&action).cloned().unwrap_or_default();
+                    dialog.kb_actions[actual_idx].2 = default_bindings;
+                    dialog.kb_customized[actual_idx] = false;
+                    *result = DialogResult::KeybindingReset(action);
+                }
+            }
+        }
+    }
+}
+
+/// Get filtered indices of kb_actions matching the filter.
+fn kb_filtered_indices(
+    kb_actions: &[(Action, String, Vec<KeyBinding>)],
+    filter_lower: &str,
+) -> Vec<usize> {
+    kb_actions.iter().enumerate()
+        .filter(|(_, (_, desc, bindings))| {
+            let keys_display = SettingsDialog::bindings_display(bindings);
+            filter_lower.is_empty()
+                || desc.to_lowercase().contains(filter_lower)
+                || keys_display.to_lowercase().contains(filter_lower)
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn pressed_letter_key(ctx: &egui::Context) -> Option<char> {

@@ -163,6 +163,43 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 });
             }
         }
+        DialogResult::KeybindingChanged(action, bindings) => {
+            // Update keybindings in app
+            app.keybindings.bindings.insert(action, bindings.clone());
+            // Save override to config
+            let overrides = app.config.keybindings_override.get_or_insert_with(std::collections::HashMap::new);
+            overrides.insert(action, bindings);
+            app.config.save();
+            app.status_message = format!("Updated keybinding: {}", action.description());
+        }
+        DialogResult::KeybindingBatchChanged(changes) => {
+            // Apply all changes (conflict resolution + target update)
+            let overrides = app.config.keybindings_override.get_or_insert_with(std::collections::HashMap::new);
+            let mut last_action_desc = String::new();
+            for (action, bindings) in changes {
+                app.keybindings.bindings.insert(action, bindings.clone());
+                overrides.insert(action, bindings);
+                last_action_desc = action.description().to_string();
+            }
+            app.config.save();
+            app.status_message = format!("Updated keybinding: {}", last_action_desc);
+        }
+        DialogResult::KeybindingReset(action) => {
+            // Reset to default
+            let defaults = crate::keybind::KeyBindings::defaults();
+            if let Some(default_bindings) = defaults.bindings.get(&action) {
+                app.keybindings.bindings.insert(action, default_bindings.clone());
+            }
+            // Remove from overrides
+            if let Some(overrides) = &mut app.config.keybindings_override {
+                overrides.remove(&action);
+                if overrides.is_empty() {
+                    app.config.keybindings_override = None;
+                }
+            }
+            app.config.save();
+            app.status_message = format!("Reset keybinding: {}", action.description());
+        }
         DialogResult::FontSelected(font_path) => {
             app.config.font_path = font_path.clone();
             crate::app::setup_fonts(ctx, app.config.font_path.as_deref(), app.config.font_size);

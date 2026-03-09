@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::keybind::{Action, KeyBinding};
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RegisteredDir {
     pub key: String, // shortcut key (single uppercase char)
@@ -37,6 +39,8 @@ pub struct Config {
     pub font_path: Option<String>,
     #[serde(default)]
     pub font_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keybindings_override: Option<HashMap<Action, Vec<KeyBinding>>>,
 }
 
 impl Default for Config {
@@ -56,6 +60,7 @@ impl Default for Config {
             dir_access_order: Vec::new(),
             font_path: None,
             font_size: None,
+            keybindings_override: None,
         }
     }
 }

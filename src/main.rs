@@ -8,6 +8,7 @@ mod dialog_handler;
 mod drag_drop;
 mod file_item;
 mod file_ops;
+mod keybind;
 mod keyboard;
 mod panel;
 #[cfg(windows)]

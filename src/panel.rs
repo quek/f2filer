@@ -10,6 +10,8 @@ use crate::file_item::{read_directory, read_directory_recursive_streaming, FileI
 use crate::sort::{sort_entries, SortKey, SortOrder};
 
 /// Display width of a character (2 for CJK/fullwidth, 1 otherwise).
+/// Terminal-style character display width (CJK=2, ASCII=1). Used in tests only.
+#[cfg(test)]
 fn char_display_width(c: char) -> usize {
     let cp = c as u32;
     // CJK Unified Ideographs, Hiragana, Katakana, Hangul, fullwidth forms, etc.
@@ -33,23 +35,27 @@ fn char_display_width(c: char) -> usize {
     }
 }
 
-/// Display width of a string (accounts for fullwidth characters).
+/// Display width of a string (accounts for fullwidth characters). Used in tests only.
+#[cfg(test)]
 fn str_display_width(s: &str) -> usize {
     s.chars().map(char_display_width).sum()
 }
 
-/// Truncate a string in the middle with "…" if it exceeds max display width.
-/// Shows the beginning and end of the string to preserve useful info.
-fn truncate_middle(s: &str, max_width: usize) -> String {
-    if str_display_width(s) <= max_width {
+/// Truncate a string in the middle with "…" using actual pixel widths from font metrics.
+/// `glyph_w` measures the pixel width of a single character in the target font.
+fn truncate_middle_px(s: &str, max_px: f32, glyph_w: impl Fn(char) -> f32) -> String {
+    let total: f32 = s.chars().map(|c| glyph_w(c)).sum();
+    if total <= max_px {
         return s.to_string();
     }
-    if max_width <= 3 {
+    let ellipsis_w = glyph_w('…');
+    if max_px <= ellipsis_w * 3.0 {
+        // Too narrow for middle truncation, just take from front
         let mut result = String::new();
-        let mut w = 0;
+        let mut w = 0.0f32;
         for c in s.chars() {
-            let cw = char_display_width(c);
-            if w + cw > max_width {
+            let cw = glyph_w(c);
+            if w + cw > max_px {
                 break;
             }
             result.push(c);
@@ -57,15 +63,15 @@ fn truncate_middle(s: &str, max_width: usize) -> String {
         }
         return result;
     }
-    let keep = max_width - 1; // 1 col for "…"
-    let front_budget = (keep + 1) / 2;
-    let back_budget = keep - front_budget;
+    let budget = max_px - ellipsis_w;
+    let front_budget = budget / 2.0;
+    let back_budget = budget - front_budget;
 
     // Build front part
     let mut front_str = String::new();
-    let mut front_w = 0;
+    let mut front_w = 0.0f32;
     for c in s.chars() {
-        let cw = char_display_width(c);
+        let cw = glyph_w(c);
         if front_w + cw > front_budget {
             break;
         }
@@ -76,9 +82,9 @@ fn truncate_middle(s: &str, max_width: usize) -> String {
     // Build back part (collect from end)
     let chars: Vec<char> = s.chars().collect();
     let mut back_chars = Vec::new();
-    let mut back_w = 0;
+    let mut back_w = 0.0f32;
     for &c in chars.iter().rev() {
-        let cw = char_display_width(c);
+        let cw = glyph_w(c);
         if back_w + cw > back_budget {
             break;
         }
@@ -89,6 +95,13 @@ fn truncate_middle(s: &str, max_width: usize) -> String {
     let back_str: String = back_chars.into_iter().collect();
 
     format!("{}…{}", front_str, back_str)
+}
+
+/// Truncate a string in the middle with "…" if it exceeds max display width.
+/// Uses terminal-style width (CJK=2, ASCII=1). Used in tests.
+#[cfg(test)]
+fn truncate_middle(s: &str, max_width: usize) -> String {
+    truncate_middle_px(s, max_width as f32, |c| char_display_width(c) as f32)
 }
 
 pub struct FilePanel {
@@ -623,10 +636,10 @@ impl FilePanel {
                 self.current_dir.to_string_lossy().to_string()
             };
             let font_id = egui::TextStyle::Body.resolve(ui.style());
-            let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
             let available = ui.available_width();
-            let max_chars = ((available / char_width) as usize).max(4);
-            let display = truncate_middle(&path_str, max_chars);
+            let display = truncate_middle_px(&path_str, available, |c| {
+                ui.fonts(|f| f.glyph_width(&font_id, c))
+            });
             ui.strong(display);
         });
 
@@ -686,87 +699,73 @@ impl FilePanel {
         ui.separator();
 
         // Column headers — widths shared between headers and rows for alignment
-        let mut name_w = 0.0f32;
-        let mut ext_w = 0.0f32;
-        let mut size_w = 0.0f32;
-
         let mut sort_clicked: Option<SortKey> = None;
         let cur_sort_key = self.sort_key;
         let cur_sort_order = self.sort_order;
-
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-
-            let sort_indicator = |key: SortKey| -> &'static str {
-                if cur_sort_key == key {
-                    match cur_sort_order {
-                        SortOrder::Ascending => " ^",
-                        SortOrder::Descending => " v",
-                    }
-                } else {
-                    ""
+        let sort_indicator = |key: SortKey| -> &'static str {
+            if cur_sort_key == key {
+                match cur_sort_order {
+                    SortOrder::Ascending => " ^",
+                    SortOrder::Descending => " v",
                 }
-            };
-
-            // Fixed widths for Ext, Size, Date; Name gets the rest
-            ext_w = 90.0;
-            size_w = 90.0;
-            let date_w = 145.0;
-            let w = ui.available_width();
-            name_w = (w - ext_w - size_w - date_w).max(100.0);
-
-            if ui
-                .add_sized(
-                    [name_w, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Name{}", sort_indicator(SortKey::Name)))
-                            .strong(),
-                    ),
-                )
-                .clicked()
-            {
-                sort_clicked = Some(SortKey::Name);
+            } else {
+                ""
             }
+        };
 
-            if ui
-                .add_sized(
-                    [ext_w, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Ext{}", sort_indicator(SortKey::Extension)))
-                            .strong(),
-                    ),
-                )
-                .clicked()
-            {
-                sort_clicked = Some(SortKey::Extension);
-            }
-
-            if ui
-                .add_sized(
-                    [size_w, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Size{}", sort_indicator(SortKey::Size)))
-                            .strong(),
-                    ),
-                )
-                .clicked()
-            {
-                sort_clicked = Some(SortKey::Size);
-            }
-
-            if ui
-                .add_sized(
-                    [date_w, 22.0],
-                    egui::Button::new(
-                        egui::RichText::new(format!("Date{}", sort_indicator(SortKey::Date)))
-                            .strong(),
-                    ),
-                )
-                .clicked()
-            {
-                sort_clicked = Some(SortKey::Date);
-            }
+        // Column widths: Ext/Size fixed, Date measured from actual text, Name gets the rest
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let char_w = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
+        let col_pad = char_w; // padding between data columns
+        let date_text_w = ui.fonts(|f| {
+            f.layout_no_wrap("0000-00-00 00:00".to_string(), font_id.clone(), egui::Color32::WHITE).rect.width()
         });
+        let ext_w = 90.0f32;
+        let size_w = 90.0f32;
+        let date_w = date_text_w + col_pad * 2.0; // text width + padding
+        let w = ui.available_width();
+        let name_w = (w - ext_w - size_w - date_w).max(100.0);
+
+        // Draw headers at same pixel positions as data rows (no ui.horizontal wrapper)
+        let hdr_h = 22.0;
+        let (hdr_rect, _) = ui.allocate_exact_size(egui::vec2(w, hdr_h), egui::Sense::hover());
+        let x0 = hdr_rect.min.x;
+        let y = hdr_rect.center().y;
+        let strong_color = ui.visuals().strong_text_color();
+
+        // Column positions (shared with data rows below)
+        let ext_x = x0 + name_w + col_pad;
+        let size_right_x = x0 + name_w + ext_w + size_w - col_pad;
+        let date_x = x0 + name_w + ext_w + size_w + col_pad;
+
+        // Click regions for sorting
+        let name_rect = egui::Rect::from_min_size(hdr_rect.min, egui::vec2(name_w + col_pad, hdr_h));
+        let ext_rect = egui::Rect::from_min_size(egui::pos2(ext_x, hdr_rect.min.y), egui::vec2(ext_w, hdr_h));
+        let size_rect = egui::Rect::from_min_size(egui::pos2(x0 + name_w + ext_w, hdr_rect.min.y), egui::vec2(size_w, hdr_h));
+        let date_rect = egui::Rect::from_min_size(egui::pos2(date_x, hdr_rect.min.y), egui::vec2(date_w, hdr_h));
+
+        if ui.interact(name_rect, ui.id().with("sort_name"), egui::Sense::click()).clicked() {
+            sort_clicked = Some(SortKey::Name);
+        }
+        if ui.interact(ext_rect, ui.id().with("sort_ext"), egui::Sense::click()).clicked() {
+            sort_clicked = Some(SortKey::Extension);
+        }
+        if ui.interact(size_rect, ui.id().with("sort_size"), egui::Sense::click()).clicked() {
+            sort_clicked = Some(SortKey::Size);
+        }
+        if ui.interact(date_rect, ui.id().with("sort_date"), egui::Sense::click()).clicked() {
+            sort_clicked = Some(SortKey::Date);
+        }
+
+        // Render header text at exact data column positions
+        ui.painter().text(egui::pos2(x0, y), egui::Align2::LEFT_CENTER,
+            format!("Name{}", sort_indicator(SortKey::Name)), font_id.clone(), strong_color);
+        ui.painter().text(egui::pos2(ext_x, y), egui::Align2::LEFT_CENTER,
+            format!("Ext{}", sort_indicator(SortKey::Extension)), font_id.clone(), strong_color);
+        ui.painter().text(egui::pos2(size_right_x, y), egui::Align2::RIGHT_CENTER,
+            format!("Size{}", sort_indicator(SortKey::Size)), font_id.clone(), strong_color);
+        ui.painter().text(egui::pos2(date_x, y), egui::Align2::LEFT_CENTER,
+            format!("Date{}", sort_indicator(SortKey::Date)), font_id.clone(), strong_color);
 
         if let Some(key) = sort_clicked {
             self.set_sort(key);
@@ -859,8 +858,9 @@ impl FilePanel {
                     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
                     let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
                     let col_pad = char_width; // 1 character width padding between columns
-                    let max_chars = (((name_w - col_pad) / char_width) as usize).max(4);
-                    let name_text = truncate_middle(&full_name, max_chars);
+                    let name_text = truncate_middle_px(&full_name, name_w - col_pad, |c| {
+                        ui.fonts(|f| f.glyph_width(&font_id, c))
+                    });
 
                     let x0 = row_rect.min.x;
                     let y_center = row_rect.center().y;

@@ -26,7 +26,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - コピー/移動先に同名ファイルがある場合は上書き確認ダイアログを表示
 - レイアウトは `ui.columns(2, ...)` を使用（`ui.horizontal` + `ui.vertical` は高さが正しく配分されない）
 - ファイルリストのカラムは `allocate_ui_with_layout` で配置制御（`add_sized` は中央揃えになるため使わない）
-- 長いファイル名は中央省略で表示（`truncate_middle` 関数）。文字幅は `ui.fonts()` でモノスペースフォントのグリフ幅を測定して動的に計算
+- 長いファイル名は中央省略で表示（`truncate_middle_px` 関数）。文字幅は `ui.fonts()` でグリフ幅を実測して動的に計算（プロポーショナルフォント対応）
 - フィルターにフォーカス中はキーボードショートカットを無効化（`filter_has_focus` フラグ）
 - フィルター入力中はマッチするファイルにカーソル自動移動（`..` はスキップ）
 - フィルターのEnter検出は `response.lost_focus()` を使用（egui の singleline TextEdit は Enter で自動的にフォーカスを手放すため `has_focus()` は使えない）
@@ -37,7 +37,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - 画像の読み込みはバックグラウンドスレッドで非同期実行（`Arc<Mutex<Option<DecodedImage>>>`）
 - 画像キャッシュはLRU方式（最大20エントリ）、`wanted_path` で古い読み込み結果の表示を防止
 - GIFアニメーションは全フレームをデコードし、`Instant::now()` ベースのタイマーでループ再生
-- フォントはデフォルトで egui 組み込みフォントを使用。`config.json` の `font_path` でカスタムフォントを指定可能（`Ctrl+,` の設定画面からシステムフォント一覧を選択）。カスタムフォントは `setup_fonts()` で Proportional/Monospace 両方に設定し、egui 組み込みフォントがグリフ不足時のフォールバック
+- フォントはデフォルトで Windows 標準の日本語フォント（Meiryo → Yu Gothic → MS Gothic の順で検索）を読み込み、egui 組み込みフォントをフォールバックとして使用。`config.json` の `font_path` でカスタムフォントを指定可能（`Ctrl+,` の設定画面からシステムフォント一覧を選択）。優先順位: カスタムフォント → 日本語システムフォント → egui 組み込みフォント
+- 長いファイル名・パスはピクセルベースの中央省略で表示（`truncate_middle_px` 関数）。フォント毎のグリフ幅を `ui.fonts(|f| f.glyph_width(&font_id, c))` で実測し、プロポーショナルフォントでも正確に省略位置を計算
+- カラムヘッダー（Name, Ext, Size, Date）はデータ行と同じ親UIスコープで `painter().text()` により描画（`ui.horizontal()` 内で描画すると座標空間が異なり位置がずれる）
+- 日付カラム幅は固定値ではなく、実際のフォントで "0000-00-00 00:00" を `layout_no_wrap` でレンダリングして動的に計算
 - フォントサイズは `+`/`-` キーで動的に変更可能（8〜40pt、デフォルト16pt）。`apply_font_size()` で Small/Body/Monospace/Button/Heading を比率で一括設定
 - ウィンドウ位置・サイズは毎フレーム `viewport().outer_rect` / `inner_rect` で追跡し、config保存時に永続化
 - 登録ディレクトリはカスタムショートカットキー付き（デフォルト: ディレクトリ名の先頭文字）
@@ -54,6 +57,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - **UIスレッドで `path.exists()` や `fs::metadata()` など I/O ブロッキング呼び出しを行わないこと。** HDD/ネットワーク/WSL ドライブでは数秒かかる場合がある。`navigate_to_with_resolver` でパス解決も含めてバックグラウンドで実行する
 - ディレクトリの自動リフレッシュは `fs::metadata().modified()` の mtime ポーリング（2秒間隔）で実現。カーソル位置・選択状態はファイル名で復元
 - ディレクトリ毎のカーソル位置は `cursor_history` でファイル名ベースで保存し、再訪・再起動時に復元。`cursor_dirty` で変更追跡し、両パネル間の上書きを防止。`loading_old_name` は上方向移動時のみ設定
+- キーバインドは `keybind.rs` で一元管理。`Action` enum (40アクション) と `KeyBinding` (キー+修飾キー) の組み合わせで定義。`KeyBindings::defaults()` でハードコードされたデフォルトを定義し、`config.json` の `keybindings_override` で部分上書きが可能。`is_action_pressed(action, &InputState)` で統一的にキー判定。ダイアログ固有キー（y/n、ドライブレター等）は対象外でハードコードのまま
+- Settings ダイアログはタブ式（Font / Keybindings）。`SettingsSection` enum で切替。Keybindings タブではアクション一覧を表示し、Enter で選択→キー入力でバインド変更。競合検出・確認ダイアログ付き。`d` キーでデフォルトに戻す
+- Settings ダイアログの ScrollArea は `scroll_id`（ダイアログインスタンス毎に一意）を `id_salt` に使用。egui はスクロール位置を ID で永続化するため、再表示時に前回の位置が復元されないようにする
+- egui の `key_pressed()` はイベントを消費しないため、同一フレームで複数箇所が true を返す。サブモードで Escape を処理する場合は `input_mut(|i| i.consume_key(...))` を使い、外側のダイアログ閉じ処理にイベントが伝播しないようにする
 - egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。Message/Confirm は Window の `vscroll(true)` に任せ内側 ScrollArea は不要。Settings のようにスクロール外に固定要素がある場合のみ内側 ScrollArea + `max_height(ui.available_height() - margin)` を使う
 
 ## Coding Principles
@@ -73,8 +80,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - パターンが3回繰り返されたら抽象化を検討する
 
 ### 整合性の維持
-- キーバインドを追加・変更したら `handle_misc_keys` 内のヘルプテキスト（`?` キー）も必ず更新する
+- キーバインドは `keybind.rs` の `Action` enum と `defaults()` で一元管理。ヘルプテキストは `help_text()` で自動生成されるため手動更新は不要
 - コメントにキー名を含む場合（例: `// Ctrl+.: toggle hidden`）、キー変更時にコメントも更新する
+- フォントを変更したら「固定幅前提のコード」を全て洗い出す（固定ピクセル値、文字数ベースの省略、カラム幅計算など）
 
 ### Single Source of Truth（状態の一元管理）
 - 同じデータを複数箇所に複製すると、一方の更新が他方の古い値で上書きされる。共有データは1箇所で管理するか、dirty tracking で変更箇所のみ永続化する
