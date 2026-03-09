@@ -163,7 +163,29 @@ impl FilePanel {
         panel
     }
 
+    /// Remove entries whose paths are in the given set (for recursive mode after delete/move).
+    pub fn remove_paths(&mut self, paths: &[PathBuf]) {
+        if paths.is_empty() {
+            return;
+        }
+        let set: std::collections::HashSet<&PathBuf> = paths.iter().collect();
+        self.entries.retain(|item| !set.contains(&item.path));
+        self.rebuild_filter();
+        self.selected.clear();
+        if self.cursor >= self.visible_count() {
+            self.cursor = self.visible_count().saturating_sub(1);
+        }
+    }
+
     pub fn refresh(&mut self) {
+        if self.recursive_filter {
+            // In recursive mode, preserve search results; just clear selection.
+            self.selected.clear();
+            if self.cursor >= self.visible_count() {
+                self.cursor = self.visible_count().saturating_sub(1);
+            }
+            return;
+        }
         self.entries = read_directory(&self.current_dir);
         sort_entries(&mut self.entries, self.sort_key, self.sort_order);
         self.rebuild_filter();
@@ -285,8 +307,6 @@ impl FilePanel {
     pub fn exit_recursive_search(&mut self) {
         self.recursive_filter = false;
         self.is_searching = false;
-        // Signal any running thread to stop (it will check done flag... actually
-        // it won't, but that's fine — it will just write to an orphaned Arc)
         self.search_sink = Arc::new(Mutex::new(Vec::new()));
         self.search_done = Arc::new(AtomicBool::new(false));
         self.filter.clear();
@@ -932,6 +952,229 @@ impl FilePanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── helpers for recursive search tests ──
+
+    fn make_item(name: &str, path: &str) -> FileItem {
+        FileItem {
+            name: name.to_string(),
+            path: PathBuf::from(path),
+            size: 100,
+            modified: None,
+            is_dir: false,
+            is_hidden: false,
+            extension: String::new(),
+        }
+    }
+
+    fn make_hidden_item(name: &str, path: &str) -> FileItem {
+        FileItem {
+            name: name.to_string(),
+            path: PathBuf::from(path),
+            size: 100,
+            modified: None,
+            is_dir: false,
+            is_hidden: true,
+            extension: String::new(),
+        }
+    }
+
+    /// Build a FilePanel in recursive search mode with given entries.
+    /// No filesystem access — all fields set directly.
+    fn make_recursive_panel(entries: Vec<FileItem>) -> FilePanel {
+        let mut panel = FilePanel {
+            current_dir: PathBuf::from("/test"),
+            entries,
+            cursor: 0,
+            selected: HashSet::new(),
+            sort_key: SortKey::Name,
+            sort_order: SortOrder::Ascending,
+            filter: String::new(),
+            show_hidden: true,
+            filtered_indices: Vec::new(),
+            focus_filter: false,
+            filter_has_focus: false,
+            drag_request: None,
+            drop_highlight: false,
+            clicked: false,
+            scroll_offset: 0.0,
+            viewport_h: 0.0,
+            is_loading: false,
+            loading_result: Arc::new(Mutex::new(None)),
+            loading_generation: 0,
+            loading_old_name: None,
+            last_dir_modified: None,
+            last_dir_check: Instant::now(),
+            cursor_history: HashMap::new(),
+            cursor_dirty: HashSet::new(),
+            sort_history: HashMap::new(),
+            sort_dirty: HashSet::new(),
+            recursive_filter: true,
+            is_searching: false,
+            search_sink: Arc::new(Mutex::new(Vec::new())),
+            search_done: Arc::new(AtomicBool::new(false)),
+        };
+        panel.rebuild_filter();
+        panel
+    }
+
+    // ── remove_paths tests ──
+
+    #[test]
+    fn remove_paths_removes_matching_entries() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("sub/b.txt", "/root/sub/b.txt"),
+            make_item("c.txt", "/root/c.txt"),
+        ]);
+        assert_eq!(panel.visible_count(), 3);
+
+        panel.remove_paths(&[PathBuf::from("/root/sub/b.txt")]);
+
+        assert_eq!(panel.visible_count(), 2);
+        assert_eq!(panel.entries[0].name, "a.txt");
+        assert_eq!(panel.entries[1].name, "c.txt");
+    }
+
+    #[test]
+    fn remove_paths_multiple() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.txt", "/root/b.txt"),
+            make_item("c.txt", "/root/c.txt"),
+        ]);
+
+        panel.remove_paths(&[
+            PathBuf::from("/root/a.txt"),
+            PathBuf::from("/root/c.txt"),
+        ]);
+
+        assert_eq!(panel.entries.len(), 1);
+        assert_eq!(panel.entries[0].name, "b.txt");
+    }
+
+    #[test]
+    fn remove_paths_empty_is_noop() {
+        let mut panel = make_recursive_panel(vec![make_item("a.txt", "/root/a.txt")]);
+        panel.remove_paths(&[]);
+        assert_eq!(panel.visible_count(), 1);
+    }
+
+    #[test]
+    fn remove_paths_nonexistent_is_noop() {
+        let mut panel = make_recursive_panel(vec![make_item("a.txt", "/root/a.txt")]);
+        panel.remove_paths(&[PathBuf::from("/nonexistent")]);
+        assert_eq!(panel.visible_count(), 1);
+    }
+
+    #[test]
+    fn remove_paths_clears_selection() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.txt", "/root/b.txt"),
+        ]);
+        panel.selected.insert(0);
+        panel.selected.insert(1);
+
+        panel.remove_paths(&[PathBuf::from("/root/a.txt")]);
+
+        assert!(panel.selected.is_empty());
+    }
+
+    #[test]
+    fn remove_paths_adjusts_cursor() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.txt", "/root/b.txt"),
+        ]);
+        panel.cursor = 1;
+
+        panel.remove_paths(&[PathBuf::from("/root/b.txt")]);
+
+        assert_eq!(panel.cursor, 0);
+    }
+
+    #[test]
+    fn remove_paths_all_entries() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.txt", "/root/b.txt"),
+        ]);
+        panel.cursor = 1;
+
+        panel.remove_paths(&[
+            PathBuf::from("/root/a.txt"),
+            PathBuf::from("/root/b.txt"),
+        ]);
+
+        assert_eq!(panel.visible_count(), 0);
+        assert_eq!(panel.cursor, 0);
+    }
+
+    #[test]
+    fn remove_paths_rebuilds_filter() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.rs", "/root/b.rs"),
+            make_item("c.txt", "/root/c.txt"),
+        ]);
+        panel.filter = "txt".to_string();
+        panel.rebuild_filter();
+        assert_eq!(panel.visible_count(), 2); // a.txt, c.txt
+
+        panel.remove_paths(&[PathBuf::from("/root/a.txt")]);
+
+        // b.rs and c.txt remain; filter "txt" shows only c.txt
+        assert_eq!(panel.entries.len(), 2);
+        assert_eq!(panel.visible_count(), 1);
+    }
+
+    // ── refresh in recursive mode tests ──
+
+    #[test]
+    fn refresh_recursive_preserves_entries() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_item("b.txt", "/root/b.txt"),
+        ]);
+        panel.selected.insert(0);
+
+        panel.refresh();
+
+        assert_eq!(panel.entries.len(), 2);
+        assert!(panel.selected.is_empty());
+        assert!(panel.recursive_filter);
+    }
+
+    #[test]
+    fn refresh_recursive_adjusts_cursor() {
+        let mut panel = make_recursive_panel(vec![make_item("a.txt", "/root/a.txt")]);
+        panel.cursor = 5;
+
+        panel.refresh();
+
+        assert_eq!(panel.cursor, 0);
+    }
+
+    #[test]
+    fn remove_paths_with_hidden_filter() {
+        let mut panel = make_recursive_panel(vec![
+            make_item("a.txt", "/root/a.txt"),
+            make_hidden_item(".secret", "/root/.secret"),
+            make_item("b.txt", "/root/b.txt"),
+        ]);
+        panel.show_hidden = false;
+        panel.rebuild_filter();
+        assert_eq!(panel.visible_count(), 2); // .secret hidden
+
+        panel.remove_paths(&[PathBuf::from("/root/a.txt")]);
+
+        // .secret and b.txt remain; .secret still hidden
+        assert_eq!(panel.entries.len(), 2);
+        assert_eq!(panel.visible_count(), 1);
+    }
+
+    // ── existing tests ──
 
     #[test]
     fn char_width_ascii() {

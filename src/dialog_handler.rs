@@ -194,6 +194,15 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
 
                 app.status_message = result_message;
 
+                // For delete/move: remove operated files from recursive search results
+                if matches!(
+                    &progress_dialog.op_kind,
+                    OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
+                ) {
+                    app.left_panel.remove_paths(&succeeded_paths);
+                    app.right_panel.remove_paths(&succeeded_paths);
+                }
+
                 if !succeeded_paths.is_empty() {
                     match &progress_dialog.op_kind {
                         OpKind::Copy { dest_dir, .. } => {
