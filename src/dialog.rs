@@ -66,6 +66,8 @@ pub struct InputDialog {
     pub title: String,
     pub value: String,
     pub action: InputAction,
+    /// If set, select characters 0..N on the first frame.
+    pub select_end: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -127,14 +129,18 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let message = dialog.message.clone();
         let mut open = true;
 
+        // Use up to 60% of available width for confirm dialogs
+        let max_w = ctx.screen_rect().width() * 0.6;
+        let min_w = 300.0_f32.min(max_w);
         egui::Window::new(&title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
+            .max_width(max_w)
             .max_height(400.0)
             .show(ctx, |ui| {
-                ui.set_min_width(300.0);
+                ui.set_min_width(min_w);
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
                     .show(ui, |ui| {
@@ -177,14 +183,24 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut open)
             .show(ctx, |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut dialog.value)
-                        .desired_width(300.0),
-                );
+                let output = egui::TextEdit::singleline(&mut dialog.value)
+                    .desired_width(300.0)
+                    .show(ui);
+                let response = &output.response;
 
                 // Auto-focus the text input
                 if !response.has_focus() {
                     response.request_focus();
+                }
+
+                // Apply initial text selection (e.g., filename stem for rename)
+                if let Some(end) = dialog.select_end.take() {
+                    let mut state = output.state;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(0),
+                        egui::text::CCursor::new(end),
+                    )));
+                    state.store(ui.ctx(), response.id);
                 }
 
                 ui.add_space(10.0);

@@ -419,7 +419,7 @@ impl F2App {
                 title: "Overwrite?".to_string(),
                 message: format!(
                     "The following files already exist:\n{}\n\nOverwrite?",
-                    conflicts.join(", ")
+                    crate::keyboard::format_name_list(&conflicts)
                 ),
                 action: ConfirmAction::CopyOverwrite {
                     sources: dropped_files,

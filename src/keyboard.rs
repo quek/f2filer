@@ -6,6 +6,18 @@ use crate::app::{ActivePanel, F2App};
 use crate::dialog::*;
 use crate::file_ops;
 
+const NAME_LIST_MAX_DISPLAY: usize = 20;
+
+/// Format a list of names for display in dialogs (one per line, truncated).
+pub fn format_name_list(names: &[String]) -> String {
+    if names.len() <= NAME_LIST_MAX_DISPLAY {
+        names.join("\n")
+    } else {
+        let shown: Vec<&str> = names[..NAME_LIST_MAX_DISPLAY].iter().map(|s| s.as_str()).collect();
+        format!("{}\n...and {} more", shown.join("\n"), names.len() - NAME_LIST_MAX_DISPLAY)
+    }
+}
+
 struct KeyState {
     tab: bool,
     j: bool,
@@ -344,7 +356,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
                         title: "Overwrite?".to_string(),
                         message: format!(
                             "The following files already exist:\n{}\n\nOverwrite?",
-                            conflicts.join(", ")
+                            format_name_list(&conflicts)
                         ),
                         action,
                     });
@@ -360,14 +372,14 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
             let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
             let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
             let is_unc = paths.iter().any(|p| p.to_string_lossy().starts_with(r"\\"));
+            let list = format_name_list(&names);
             let message = if is_unc {
                 format!(
                     "PERMANENTLY delete {} item(s)?\n{}\n\nNetwork path: recycle bin is not available.",
-                    names.len(),
-                    names.join(", ")
+                    names.len(), list
                 )
             } else {
-                format!("Delete {} item(s)?\n{}", names.len(), names.join(", "))
+                format!("Delete {} item(s)?\n{}", names.len(), list)
             };
             app.dialog.confirm = Some(ConfirmDialog {
                 title: if is_unc {
@@ -387,12 +399,12 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
         if !targets.is_empty() {
             let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
             let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
+            let list = format_name_list(&names);
             app.dialog.confirm = Some(ConfirmDialog {
                 title: "⚠ Permanent Delete".to_string(),
                 message: format!(
                     "PERMANENTLY delete {} item(s)?\n{}\n\nThis cannot be undone!",
-                    names.len(),
-                    names.join(", ")
+                    names.len(), list
                 ),
                 action: ConfirmAction::DeletePermanent(paths),
             });
@@ -439,6 +451,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
                 title: "Zip Compress".to_string(),
                 value: default_name,
                 action: InputAction::ZipCompress(sources),
+                select_end: None,
             });
         }
     }
@@ -511,7 +524,7 @@ fn start_copy_or_move(app: &mut F2App, ctx: &egui::Context, is_move: bool) {
             title: "Overwrite?".to_string(),
             message: format!(
                 "The following files already exist:\n{}\n\nOverwrite?",
-                conflicts.join(", ")
+                format_name_list(&conflicts)
             ),
             action,
         });
@@ -522,10 +535,19 @@ fn handle_edit_operations(app: &mut F2App, input: &KeyState) {
     // r: rename
     if input.r {
         if let Some(entry) = app.active_panel().current_entry() {
+            let stem_len = if entry.is_dir {
+                entry.name.chars().count()
+            } else {
+                std::path::Path::new(&entry.name)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().chars().count())
+                    .unwrap_or(entry.name.chars().count())
+            };
             app.dialog.input = Some(InputDialog {
                 title: "Rename".to_string(),
                 value: entry.name.clone(),
                 action: InputAction::Rename(entry.path.clone()),
+                select_end: Some(stem_len),
             });
         }
     }
@@ -536,6 +558,7 @@ fn handle_edit_operations(app: &mut F2App, input: &KeyState) {
             title: "New Directory".to_string(),
             value: String::new(),
             action: InputAction::NewDirectory,
+            select_end: None,
         });
     }
 }
@@ -715,6 +738,7 @@ PgUp / PgDn    :  Page scroll
             title: "Register Directory".to_string(),
             value: default_name,
             action: InputAction::RegisterDirectory(dir),
+            select_end: None,
         });
     }
 

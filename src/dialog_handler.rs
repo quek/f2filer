@@ -80,6 +80,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                             path,
                             name: value,
                         },
+                        select_end: None,
                     });
                 }
                 InputAction::RegisterDirectoryKey { path, name } => {
@@ -158,6 +159,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     ),
                     value: current_key,
                     action: InputAction::EditRegisteredDirKey(idx),
+                    select_end: None,
                 });
             }
         }

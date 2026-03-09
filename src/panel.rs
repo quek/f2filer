@@ -646,14 +646,24 @@ impl FilePanel {
             }
             let filter_id = panel_id.with("filter");
             let mut filter = self.filter.clone();
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut filter)
-                    .id(filter_id)
-                    .desired_width(ui.available_width()),
-            );
+            let output = egui::TextEdit::singleline(&mut filter)
+                .id(filter_id)
+                .desired_width(ui.available_width())
+                .show(ui);
+            let response = &output.response;
             if self.focus_filter {
                 response.request_focus();
                 self.focus_filter = false;
+                // Select all existing text
+                if !filter.is_empty() {
+                    let len = filter.chars().count();
+                    let mut state = output.state;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(0),
+                        egui::text::CCursor::new(len),
+                    )));
+                    state.store(ui.ctx(), response.id);
+                }
             }
             self.filter_has_focus = response.has_focus();
             // singleline TextEdit auto-surrenders focus on Enter,
