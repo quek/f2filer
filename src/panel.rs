@@ -502,9 +502,15 @@ impl FilePanel {
     ) {
         let panel_id = egui::Id::new(id_salt);
 
-        // Current path
+        // Current path (truncated to available width)
         ui.horizontal(|ui| {
-            ui.strong(self.current_dir.to_string_lossy().to_string());
+            let path_str = self.current_dir.to_string_lossy().to_string();
+            let font_id = egui::TextStyle::Body.resolve(ui.style());
+            let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
+            let available = ui.available_width();
+            let max_chars = ((available / char_width) as usize).max(4);
+            let display = truncate_middle(&path_str, max_chars);
+            ui.strong(display);
         });
 
         // Filter input
