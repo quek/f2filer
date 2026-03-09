@@ -24,19 +24,8 @@ Windows 用の2画面ファイラー。
 
 ## 必要環境
 
-### 実行時
 - 動画プレビューには [ffmpeg](https://ffmpeg.org/)（ffmpeg / ffprobe）が PATH に必要（`winget install ffmpeg` でインストール可能）
 - 日本語表示には CJK 対応フォントの設定を推奨（`Ctrl+,` で設定画面からシステムフォントを選択可能）
-
-### 開発時
-- Rust 1.81+
-
-## ビルド・実行
-
-```bash
-cargo build
-cargo run
-```
 
 ## キーバインド
 
@@ -44,54 +33,21 @@ Vim 風のキーバインドを採用。アプリ内で `?` キーを押すと�
 
 ## 設定
 
-設定ファイル: `%APPDATA%\f2filer\config.json`
-
-| 項目 | 説明 |
-|------|------|
-| `show_hidden` | 隠しファイル表示 |
-| `last_left_dir` / `last_right_dir` | パネルの最後のディレクトリ |
-| `drive_dirs` | ドライブごとの最後のディレクトリ |
-| `registered_dirs` | 登録ディレクトリ（キー、名前、パス） |
-| `window_x` / `window_y` / `window_width` / `window_height` | ウィンドウ位置・サイズ |
-| `font_path` | フォントファイルのパス（未指定時は egui デフォルト） |
-| `font_size` | フォントサイズ（未指定時は 16pt） |
-
 `Ctrl+,` で設定画面を開き、システムフォント一覧から選択できます。`+`/`-` キーでフォントサイズを変更できます。設定はディレクトリ移動のたびに自動保存されます。
 
-## 技術スタック
+設定ファイル: `%APPDATA%\f2filer\config.json`
 
-- **言語**: Rust (edition 2021)
-- **GUI**: [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) 0.31 / [egui](https://github.com/emilk/egui)
-- **画像**: [image](https://crates.io/crates/image) 0.25
-- **SVG**: [resvg](https://crates.io/crates/resvg) 0.44
-- **動画/音声デコード**: ffmpeg / ffprobe（外部コマンド）
-- **音声再生**: [rodio](https://crates.io/crates/rodio) 0.20 (WAV/OGG/AIFF)
-- **WAV 解析**: [hound](https://crates.io/crates/hound) 3
-- **ZIP**: [zip](https://crates.io/crates/zip) 2
-- **フォント**: egui 組み込み（カスタムフォント設定可能）
+## 開発
 
-## アーキテクチャ
+### 必要環境
 
-```
-src/
-├── main.rs           # エントリポイント
-├── app.rs            # メインアプリ、プレビュー管理
-├── keyboard.rs       # キーボード入力処理
-├── panel.rs          # ファイル一覧表示、カーソル、選択、フィルター
-├── file_item.rs      # ファイル情報構造体
-├── file_ops.rs       # ファイル操作、ドライブ列挙、ZIP 圧縮/展開
-├── dialog.rs         # 確認/入力/メッセージ/ドライブ選択ダイアログ
-├── dialog_handler.rs # ダイアログ結果のハンドリング
-├── sort.rs           # ソートロジック
-├── config.rs         # 設定の永続化（アトミック書き込み）
-├── undo.rs           # Undo/Redo 履歴管理
-├── image_viewer.rs   # 画像プレビュー (静止画+GIF+SVG、非同期読込、LRUキャッシュ)
-├── video_viewer.rs   # 動画プレビュー (ffmpeg デコード、音声同期再生)
-├── audio_viewer.rs   # 音声プレビュー WAV/OGG/AIFF (波形表示、ストリーミング再生、無音スキップ)
-├── archive_viewer.rs # ZIP 内容一覧プレビュー
-├── viewer.rs         # テキストビューア
-├── shell.rs          # 外部コマンド連携 (エディタ、プロパティ、コンテキストメニュー)
-└── drag_drop.rs      # OLE ドラッグ&ドロップ
+- Rust 1.81+
+
+### ビルド・実行
+
+```bash
+cargo build
+cargo run
 ```
 
 ## ライセンス
