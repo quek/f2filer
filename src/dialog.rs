@@ -704,7 +704,11 @@ fn show_settings_font_tab(
         } else {
             egui::RichText::new(*name)
         };
-        if ui.button(text).clicked() {
+        let btn_response = ui.button(text);
+        if is_cursor {
+            btn_response.scroll_to_me(Some(egui::Align::Center));
+        }
+        if btn_response.clicked() {
             let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
             *result = DialogResult::FontSelected(font_path);
         }
@@ -885,7 +889,10 @@ fn show_settings_keybindings_tab(
         } else {
             egui::RichText::new(&label)
         };
-        ui.label(text);
+        let row_response = ui.label(text);
+        if is_cursor {
+            row_response.scroll_to_me(Some(egui::Align::Center));
+        }
 
         // Expanded view: show individual bindings + "Add new"
         if is_expanded {
