@@ -102,6 +102,7 @@ pub struct SettingsDialog {
     pub cursor: usize,
     pub filter: String,
     pub filter_has_focus: bool,
+    pub current_font: String, // display name of current font
 }
 
 pub enum DialogResult {
@@ -226,6 +227,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                 ui.set_min_width(500.0);
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
+                    .auto_shrink(false)
                     .show(ui, |ui| {
                         ui.label(&message);
                     });
@@ -476,7 +478,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(400.0);
-                ui.label("Font:");
+                ui.label(format!("Font: {}", dialog.current_font));
 
                 // Filter input
                 let filter_response = ui.add(

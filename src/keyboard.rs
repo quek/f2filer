@@ -689,11 +689,15 @@ PgUp / PgDn    :  Page scroll
     // Ctrl+,: settings
     if input.ctrl_comma {
         let fonts = crate::dialog::enumerate_system_fonts();
+        let current_font = app.config.font_path.as_ref()
+            .and_then(|p| std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "(Default)".to_string());
         app.dialog.settings = Some(SettingsDialog {
             fonts,
             cursor: 0,
             filter: String::new(),
             filter_has_focus: true,
+            current_font,
         });
     }
 
