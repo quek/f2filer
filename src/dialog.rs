@@ -116,8 +116,6 @@ pub struct KbConflict {
 
 pub struct SettingsDialog {
     pub section: SettingsSection,
-    // --- Shared ---
-    pub scroll_id: u64,  // unique per dialog instance (resets scroll position)
     // --- Font section ---
     pub fonts: Vec<(String, String)>, // (display_name, full_path)
     pub cursor: usize,
@@ -149,15 +147,12 @@ impl SettingsDialog {
             .iter()
             .map(|&action| keybindings.is_customized(action))
             .collect();
-        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let scroll_id = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         SettingsDialog {
             section: SettingsSection::default(),
-            scroll_id,
             fonts,
             cursor: 0,
             filter: String::new(),
-            filter_has_focus: false,
+            filter_has_focus: true,
             current_font,
             kb_actions,
             kb_cursor: 0,
@@ -568,6 +563,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .collapsible(false)
             .resizable(true)
             .constrain(true)
+            .vscroll(true)
             .default_pos(screen.center())
             .pivot(egui::Align2::CENTER_CENTER)
             .default_width(500.0)
@@ -581,6 +577,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                     }
                     if ui.selectable_label(dialog.section == SettingsSection::Font, "Font").clicked() {
                         dialog.section = SettingsSection::Font;
+                        dialog.filter_has_focus = true;
                     }
                 });
                 ui.separator();
@@ -590,7 +587,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                     if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
                         dialog.section = match dialog.section {
                             SettingsSection::Font => SettingsSection::Keybindings,
-                            SettingsSection::Keybindings => SettingsSection::Font,
+                            SettingsSection::Keybindings => {
+                                dialog.filter_has_focus = true;
+                                SettingsSection::Font
+                            }
                         };
                     }
                 }
@@ -695,27 +695,20 @@ fn show_settings_font_tab(
         dialog.cursor = filtered.len().saturating_sub(1);
     }
 
-    // Dynamically compute scroll area height from available window space
-    let scroll_h = (ui.available_height() - 8.0).max(100.0);
-    egui::ScrollArea::vertical()
-        .id_salt(egui::Id::new("font_scroll").with(dialog.scroll_id))
-        .max_height(scroll_h)
-        .show(ui, |ui| {
-            for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
-                let is_cursor = list_idx == dialog.cursor;
-                let text = if is_cursor {
-                    egui::RichText::new(*name)
-                        .color(egui::Color32::from_rgb(100, 180, 255))
-                        .strong()
-                } else {
-                    egui::RichText::new(*name)
-                };
-                if ui.button(text).clicked() {
-                    let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
-                    *result = DialogResult::FontSelected(font_path);
-                }
-            }
-        });
+    for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
+        let is_cursor = list_idx == dialog.cursor;
+        let text = if is_cursor {
+            egui::RichText::new(*name)
+                .color(egui::Color32::from_rgb(100, 180, 255))
+                .strong()
+        } else {
+            egui::RichText::new(*name)
+        };
+        if ui.button(text).clicked() {
+            let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
+            *result = DialogResult::FontSelected(font_path);
+        }
+    }
 
     // Keyboard navigation (only when filter is not focused)
     if !filter_focused && !filtered.is_empty() {
@@ -870,70 +863,63 @@ fn show_settings_keybindings_tab(
         dialog.kb_cursor = filtered_indices.len().saturating_sub(1);
     }
 
-    // --- Scroll area ---
-    let scroll_h = (ui.available_height() - 8.0).max(100.0);
-    egui::ScrollArea::vertical()
-        .id_salt(egui::Id::new("kb_scroll").with(dialog.scroll_id))
-        .max_height(scroll_h)
-        .show(ui, |ui| {
-            for (list_idx, &actual_idx) in filtered_indices.iter().enumerate() {
-                let is_cursor = list_idx == dialog.kb_cursor;
-                let (_, desc, bindings) = &dialog.kb_actions[actual_idx];
-                let customized = dialog.kb_customized[actual_idx];
-                let keys_display = SettingsDialog::bindings_display(bindings);
-                let is_expanded = is_cursor && dialog.kb_expanded;
+    for (list_idx, &actual_idx) in filtered_indices.iter().enumerate() {
+        let is_cursor = list_idx == dialog.kb_cursor;
+        let (_, desc, bindings) = &dialog.kb_actions[actual_idx];
+        let customized = dialog.kb_customized[actual_idx];
+        let keys_display = SettingsDialog::bindings_display(bindings);
+        let is_expanded = is_cursor && dialog.kb_expanded;
 
-                // Main action row
-                let marker = if customized { "* " } else { "  " };
-                let label = format!("{}{:<30} {}", marker, desc, keys_display);
-                let text = if is_cursor && customized {
-                    egui::RichText::new(&label)
-                        .color(egui::Color32::from_rgb(100, 180, 255))
-                        .strong()
-                } else if is_cursor {
-                    egui::RichText::new(&label)
-                        .color(egui::Color32::from_rgb(100, 180, 255))
-                } else if customized {
-                    egui::RichText::new(&label).strong()
+        // Main action row
+        let marker = if customized { "* " } else { "  " };
+        let label = format!("{}{:<30} {}", marker, desc, keys_display);
+        let text = if is_cursor && customized {
+            egui::RichText::new(&label)
+                .color(egui::Color32::from_rgb(100, 180, 255))
+                .strong()
+        } else if is_cursor {
+            egui::RichText::new(&label)
+                .color(egui::Color32::from_rgb(100, 180, 255))
+        } else if customized {
+            egui::RichText::new(&label).strong()
+        } else {
+            egui::RichText::new(&label)
+        };
+        ui.label(text);
+
+        // Expanded view: show individual bindings + "Add new"
+        if is_expanded {
+            let total_sub_items = bindings.len() + 1; // bindings + "Add new"
+            for (bind_idx, binding) in bindings.iter().enumerate() {
+                let is_sub_cursor = dialog.kb_sub_cursor == bind_idx;
+                let bind_label = format!("      {} {}", if is_sub_cursor { ">" } else { " " }, binding.display());
+                let bind_text = if is_sub_cursor {
+                    egui::RichText::new(&bind_label)
+                        .color(egui::Color32::from_rgb(255, 200, 100))
                 } else {
-                    egui::RichText::new(&label)
+                    egui::RichText::new(&bind_label)
+                        .color(egui::Color32::from_rgb(180, 180, 180))
                 };
-                ui.label(text);
-
-                // Expanded view: show individual bindings + "Add new"
-                if is_expanded {
-                    let total_sub_items = bindings.len() + 1; // bindings + "Add new"
-                    for (bind_idx, binding) in bindings.iter().enumerate() {
-                        let is_sub_cursor = dialog.kb_sub_cursor == bind_idx;
-                        let bind_label = format!("      {} {}", if is_sub_cursor { ">" } else { " " }, binding.display());
-                        let bind_text = if is_sub_cursor {
-                            egui::RichText::new(&bind_label)
-                                .color(egui::Color32::from_rgb(255, 200, 100))
-                        } else {
-                            egui::RichText::new(&bind_label)
-                                .color(egui::Color32::from_rgb(180, 180, 180))
-                        };
-                        ui.label(bind_text);
-                    }
-                    // "Add new" row
-                    let is_add_cursor = dialog.kb_sub_cursor == bindings.len();
-                    let add_label = format!("      {} + Add new binding", if is_add_cursor { ">" } else { " " });
-                    let add_text = if is_add_cursor {
-                        egui::RichText::new(&add_label)
-                            .color(egui::Color32::from_rgb(255, 200, 100))
-                    } else {
-                        egui::RichText::new(&add_label)
-                            .color(egui::Color32::from_rgb(120, 180, 120))
-                    };
-                    ui.label(add_text);
-
-                    // Clamp sub_cursor
-                    if dialog.kb_sub_cursor >= total_sub_items {
-                        dialog.kb_sub_cursor = total_sub_items.saturating_sub(1);
-                    }
-                }
+                ui.label(bind_text);
             }
-        });
+            // "Add new" row
+            let is_add_cursor = dialog.kb_sub_cursor == bindings.len();
+            let add_label = format!("      {} + Add new binding", if is_add_cursor { ">" } else { " " });
+            let add_text = if is_add_cursor {
+                egui::RichText::new(&add_label)
+                    .color(egui::Color32::from_rgb(255, 200, 100))
+            } else {
+                egui::RichText::new(&add_label)
+                    .color(egui::Color32::from_rgb(120, 180, 120))
+            };
+            ui.label(add_text);
+
+            // Clamp sub_cursor
+            if dialog.kb_sub_cursor >= total_sub_items {
+                dialog.kb_sub_cursor = total_sub_items.saturating_sub(1);
+            }
+        }
+    }
 
     // --- Keyboard navigation ---
     if !filter_focused && !filtered_indices.is_empty() {

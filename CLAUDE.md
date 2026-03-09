@@ -59,9 +59,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - ディレクトリ毎のカーソル位置は `cursor_history` でファイル名ベースで保存し、再訪・再起動時に復元。`cursor_dirty` で変更追跡し、両パネル間の上書きを防止。`loading_old_name` は上方向移動時のみ設定
 - キーバインドは `keybind.rs` で一元管理。`Action` enum (40アクション) と `KeyBinding` (キー+修飾キー) の組み合わせで定義。`KeyBindings::defaults()` でハードコードされたデフォルトを定義し、`config.json` の `keybindings_override` で部分上書きが可能。`is_action_pressed(action, &InputState)` で統一的にキー判定。ダイアログ固有キー（y/n、ドライブレター等）は対象外でハードコードのまま
 - Settings ダイアログはタブ式（Font / Keybindings）。`SettingsSection` enum で切替。Keybindings タブではアクション一覧を表示し、Enter で選択→キー入力でバインド変更。競合検出・確認ダイアログ付き。`d` キーでデフォルトに戻す
-- Settings ダイアログの ScrollArea は `scroll_id`（ダイアログインスタンス毎に一意）を `id_salt` に使用。egui はスクロール位置を ID で永続化するため、再表示時に前回の位置が復元されないようにする
+- egui Window のスクロールは `.vscroll(true)` を Window 自体に設定するのが最も安定。内側に独自 ScrollArea を配置すると、スクロール位置の永続化やサイズ計算で問題が起きやすい
 - egui の `key_pressed()` はイベントを消費しないため、同一フレームで複数箇所が true を返す。サブモードで Escape を処理する場合は `input_mut(|i| i.consume_key(...))` を使い、外側のダイアログ閉じ処理にイベントが伝播しないようにする
-- egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。Message/Confirm は Window の `vscroll(true)` に任せ内側 ScrollArea は不要。Settings のようにスクロール外に固定要素がある場合のみ内側 ScrollArea + `max_height(ui.available_height() - margin)` を使う
+- egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。スクロールが必要なダイアログは Window の `.vscroll(true)` に統一し、内側 ScrollArea は使わない
 
 ## Coding Principles
 
@@ -111,6 +111,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - **実データから始める**: save/restore のバグでは、まず永続化されたデータ（config.json 等）を確認する。コードパスの理論的推論より、実際の状態の観察が速く正確
 - **フルサイクルで検証する**: 個別の関数（save / restore）が正しくても、パイプライン全体（変更→保存→永続化→読込→復元）が壊れていれば無意味。端から端まで通して確認する
 - **修正と検証を分離する**: バグを修正したら、ユーザーに確認させる前に自分で検証する。「もっともらしい修正」が実際の症状の原因とは限らない
+- **動いている既存コードを先に参照する**: 同じアプリ内に類似機能がある場合、ライブラリのソースコードを深追いするより、自コードベース内の成功パターンとの差分比較が速く確実
 
 ## 振り返りワークフロー（コミット前に実施）
 
