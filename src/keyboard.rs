@@ -49,6 +49,7 @@ struct KeyState {
     e: bool,
     alt_enter: bool,
     backslash: bool,
+    ctrl_comma: bool,
 }
 
 fn read_key_state(ctx: &egui::Context) -> KeyState {
@@ -95,6 +96,7 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         e: i.key_pressed(egui::Key::E),
         alt_enter: i.key_pressed(egui::Key::Enter) && i.modifiers.alt,
         backslash: i.key_pressed(egui::Key::Backslash),
+        ctrl_comma: i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl,
     })
 }
 
@@ -574,6 +576,7 @@ v              :  Preview (text/image/audio/video)
 Ctrl+R         :  Refresh
 .              :  Toggle hidden files
 :              :  Command mode
+Ctrl+,         :  Settings
 q / Ctrl+Q     :  Quit
 Alt+k / Alt+j  :  Jump to top / bottom
 PgUp / PgDn    :  Page scroll
@@ -662,6 +665,17 @@ PgUp / PgDn    :  Page scroll
                 app.status_message = msg;
             }
         }
+    }
+
+    // Ctrl+,: settings
+    if input.ctrl_comma {
+        let fonts = crate::dialog::enumerate_system_fonts();
+        app.dialog.settings = Some(SettingsDialog {
+            fonts,
+            cursor: 0,
+            filter: String::new(),
+            filter_has_focus: true,
+        });
     }
 
     // :: command mode

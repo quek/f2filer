@@ -46,8 +46,7 @@ pub struct F2App {
 
 impl F2App {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
-        // Load HackGen font
-        setup_fonts(&cc.egui_ctx);
+        setup_fonts(&cc.egui_ctx, config.font_path.as_deref());
 
         let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
         let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
@@ -869,36 +868,32 @@ mod tests {
     }
 }
 
-fn setup_fonts(ctx: &egui::Context) {
-    let font_path = std::path::Path::new(
-        r"C:\Users\ancient\AppData\Local\Microsoft\Windows\Fonts\HackGenConsoleNF-Regular.ttf",
-    );
+pub(crate) fn setup_fonts(ctx: &egui::Context, font_path: Option<&str>) {
+    if let Some(path) = font_path {
+        if let Ok(font_data) = std::fs::read(path) {
+            let mut fonts = egui::FontDefinitions::default();
 
-    if let Ok(font_data) = std::fs::read(font_path) {
-        let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "CustomFont".to_string(),
+                egui::FontData::from_owned(font_data).into(),
+            );
 
-        fonts.font_data.insert(
-            "HackGen".to_string(),
-            egui::FontData::from_owned(font_data).into(),
-        );
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "CustomFont".to_string());
 
-        // Set HackGen as the primary font for both proportional and monospace
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "HackGen".to_string());
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "CustomFont".to_string());
 
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .insert(0, "HackGen".to_string());
-
-        ctx.set_fonts(fonts);
+            ctx.set_fonts(fonts);
+        }
     }
 
-    // Increase font sizes
     let mut style = (*ctx.style()).clone();
     style.text_styles.insert(
         egui::TextStyle::Small,

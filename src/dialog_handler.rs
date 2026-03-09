@@ -161,6 +161,20 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 });
             }
         }
+        DialogResult::FontSelected(font_path) => {
+            app.config.font_path = font_path.clone();
+            crate::app::setup_fonts(ctx, app.config.font_path.as_deref());
+            app.config.save();
+            let name = font_path
+                .as_ref()
+                .and_then(|p| {
+                    std::path::Path::new(p)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| "(Default)".to_string());
+            app.status_message = format!("Font: {}", name);
+        }
         DialogResult::ProgressFinished => {
             if let Some(progress_dialog) = app.dialog.progress.take() {
                 let state = progress_dialog.handle.state.lock().ok();

@@ -23,9 +23,11 @@ Windows 用の2画面ファイラー。
 
 ## 必要環境
 
+### 実行時
+- 日本語表示には CJK 対応フォントの設定を推奨（`Ctrl+,` で設定画面からシステムフォントを選択可能）
+
+### 開発時
 - Rust 1.81+
-- Windows（ドライブ列挙、ファイル属性にWindows APIを使用）
-- [HackGen Console NF](https://github.com/yuru7/HackGen) フォント（ユーザーローカルフォントディレクトリにインストール）
 
 ## ビルド・実行
 
@@ -49,8 +51,9 @@ Vim 風のキーバインドを採用。アプリ内で `?` キーを押すと�
 | `drive_dirs` | ドライブごとの最後のディレクトリ |
 | `registered_dirs` | 登録ディレクトリ（キー、名前、パス） |
 | `window_x` / `window_y` / `window_width` / `window_height` | ウィンドウ位置・サイズ |
+| `font_path` | フォントファイルのパス（未指定時は egui デフォルト） |
 
-設定はディレクトリ移動のたびに自動保存されます。
+`Ctrl+,` で設定画面を開き、システムフォント一覧から選択できます。設定はディレクトリ移動のたびに自動保存されます。
 
 ## 技術スタック
 
@@ -62,7 +65,7 @@ Vim 風のキーバインドを採用。アプリ内で `?` キーを押すと�
 - **音声再生**: [rodio](https://crates.io/crates/rodio) 0.19
 - **WAV 解析**: [hound](https://crates.io/crates/hound) 3
 - **ZIP**: [zip](https://crates.io/crates/zip) 2
-- **フォント**: HackGen Console NF
+- **フォント**: egui 組み込み（カスタムフォント設定可能）
 
 ## アーキテクチャ
 

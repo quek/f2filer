@@ -28,6 +28,8 @@ pub struct Config {
     pub registered_dirs: Vec<RegisteredDir>,
     #[serde(default)]
     pub cursor_dirs: HashMap<String, String>,
+    #[serde(default)]
+    pub font_path: Option<String>,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             window_height: None,
             registered_dirs: Vec::new(),
             cursor_dirs: HashMap::new(),
+            font_path: None,
         }
     }
 }

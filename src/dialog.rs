@@ -11,6 +11,7 @@ pub struct DialogState {
     pub drive: Option<DriveDialog>,
     pub registered_dir: Option<RegisteredDirDialog>,
     pub progress: Option<ProgressDialog>,
+    pub settings: Option<SettingsDialog>,
 }
 
 impl DialogState {
@@ -21,6 +22,7 @@ impl DialogState {
             || self.drive.is_some()
             || self.registered_dir.is_some()
             || self.progress.is_some()
+            || self.settings.is_some()
     }
 }
 
@@ -95,6 +97,13 @@ pub struct RegisteredDirDialog {
     pub cursor: usize,
 }
 
+pub struct SettingsDialog {
+    pub fonts: Vec<(String, String)>, // (display_name, full_path)
+    pub cursor: usize,
+    pub filter: String,
+    pub filter_has_focus: bool,
+}
+
 pub enum DialogResult {
     None,
     ConfirmYes(ConfirmAction),
@@ -103,6 +112,7 @@ pub enum DialogResult {
     RegisteredDirSelected(String),
     RegisteredDirDeleted(usize),
     RegisteredDirEditKey(usize),
+    FontSelected(Option<String>), // None = default, Some(path) = custom font
     ProgressFinished,
     Closed,
 }
@@ -455,18 +465,104 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
     }
 
+    // Settings dialog (font selection)
+    if let Some(dialog) = &mut state.settings {
+        let mut open = true;
+
+        egui::Window::new("Settings")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(400.0);
+                ui.label("Font:");
+
+                // Filter input
+                let filter_response = ui.add(
+                    egui::TextEdit::singleline(&mut dialog.filter)
+                        .hint_text("Filter...")
+                        .desired_width(380.0),
+                );
+                if dialog.filter_has_focus {
+                    filter_response.request_focus();
+                    dialog.filter_has_focus = false;
+                }
+                let filter_focused = filter_response.has_focus();
+
+                ui.add_space(4.0);
+
+                // Build filtered list: (Default) + matching fonts
+                let filter_lower = dialog.filter.to_lowercase();
+                let filtered: Vec<(usize, &str, &str)> = std::iter::once((usize::MAX, "(Default)", ""))
+                    .chain(dialog.fonts.iter().enumerate().map(|(i, (name, path))| (i, name.as_str(), path.as_str())))
+                    .filter(|(_, name, _)| filter_lower.is_empty() || name.to_lowercase().contains(&filter_lower))
+                    .collect();
+
+                // Clamp cursor
+                if dialog.cursor >= filtered.len() {
+                    dialog.cursor = filtered.len().saturating_sub(1);
+                }
+
+                egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        for (list_idx, (_, name, path)) in filtered.iter().enumerate() {
+                            let is_cursor = list_idx == dialog.cursor;
+                            let text = if is_cursor {
+                                egui::RichText::new(*name)
+                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                    .strong()
+                            } else {
+                                egui::RichText::new(*name)
+                            };
+                            if ui.button(text).clicked() {
+                                let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
+                                result = DialogResult::FontSelected(font_path);
+                            }
+                        }
+                    });
+
+                // Keyboard navigation (only when filter is not focused)
+                if !filter_focused && !filtered.is_empty() {
+                    if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+                        dialog.cursor = (dialog.cursor + 1) % filtered.len();
+                    }
+                    if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+                        dialog.cursor = (dialog.cursor + filtered.len() - 1) % filtered.len();
+                    }
+                    if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
+                        if let Some((_, _, path)) = filtered.get(dialog.cursor) {
+                            let font_path = if path.is_empty() { None } else { Some(path.to_string()) };
+                            result = DialogResult::FontSelected(font_path);
+                        }
+                    }
+                }
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            result = DialogResult::Closed;
+        }
+
+        if !open {
+            result = DialogResult::Closed;
+        }
+    }
+
     // Clean up closed dialogs
     match &result {
         DialogResult::ConfirmYes(_)
         | DialogResult::Closed
         | DialogResult::DriveSelected(_)
         | DialogResult::RegisteredDirSelected(_)
-        | DialogResult::RegisteredDirEditKey(_) => {
+        | DialogResult::RegisteredDirEditKey(_)
+        | DialogResult::FontSelected(_) => {
             state.confirm = None;
             state.input = None;
             state.message = None;
             state.drive = None;
             state.registered_dir = None;
+            state.settings = None;
         }
         DialogResult::RegisteredDirDeleted(idx) => {
             // Remove from dialog's local list and adjust cursor
@@ -510,4 +606,69 @@ fn pressed_letter_key(ctx: &egui::Context) -> Option<char> {
         }
     }
     None
+}
+
+/// Enumerate system font files (.ttf, .otf, .ttc) and return (display_name, full_path) sorted by name.
+pub fn enumerate_system_fonts() -> Vec<(String, String)> {
+    let mut fonts = Vec::new();
+
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    #[cfg(windows)]
+    {
+        // System fonts
+        if let Ok(windir) = std::env::var("WINDIR") {
+            dirs.push(std::path::PathBuf::from(windir).join("Fonts"));
+        }
+        // User-installed fonts
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            dirs.push(
+                std::path::PathBuf::from(localappdata)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Fonts"),
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        dirs.push(std::path::PathBuf::from("/usr/share/fonts"));
+        dirs.push(std::path::PathBuf::from("/usr/local/share/fonts"));
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join(".local/share/fonts"));
+        }
+    }
+
+    for dir in &dirs {
+        collect_font_files(dir, &mut fonts);
+    }
+
+    fonts.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    fonts.dedup_by(|a, b| a.1 == b.1);
+    fonts
+}
+
+fn collect_font_files(dir: &std::path::Path, fonts: &mut Vec<(String, String)>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_font_files(&path, fonts);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            let ext_lower = ext.to_lowercase();
+            if ext_lower == "ttf" || ext_lower == "otf" || ext_lower == "ttc" {
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if !name.is_empty() {
+                    fonts.push((name, path.to_string_lossy().to_string()));
+                }
+            }
+        }
+    }
 }
