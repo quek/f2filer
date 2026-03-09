@@ -141,15 +141,8 @@ fn list_tar_contents(path: &Path) -> Option<String> {
     let mut file_count: usize = 0;
 
     for entry_result in entries {
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let entry_path = match entry.path() {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
+        let Ok(entry) = entry_result else { continue };
+        let Ok(entry_path) = entry.path().map(|p| p.to_string_lossy().to_string()) else { continue };
 
         let size = entry.size();
         total_size += size;

@@ -68,7 +68,7 @@ pub fn copy_files_to_clipboard(paths: &[std::path::PathBuf], is_cut: bool) {
     let data_size = header_size + file_list.len() * 2;
 
     unsafe {
-        if OpenClipboard(HWND::default()).is_err() {
+        if OpenClipboard(Some(HWND::default())).is_err() {
             return;
         }
         let _ = EmptyClipboard();
@@ -96,7 +96,7 @@ pub fn copy_files_to_clipboard(paths: &[std::path::PathBuf], is_cut: bool) {
             let _ = GlobalUnlock(hmem);
         }
 
-        let _ = SetClipboardData(CF_HDROP.0 as u32, windows::Win32::Foundation::HANDLE(hmem.0));
+        let _ = SetClipboardData(CF_HDROP.0 as u32, Some(windows::Win32::Foundation::HANDLE(hmem.0)));
 
         // Set Preferred DropEffect
         let format_name: Vec<u16> = "Preferred DropEffect\0".encode_utf16().collect();
@@ -110,7 +110,7 @@ pub fn copy_files_to_clipboard(paths: &[std::path::PathBuf], is_cut: bool) {
                     *(ptr as *mut u32) = effect;
                     let _ = GlobalUnlock(effect_mem);
                 }
-                let _ = SetClipboardData(cf, windows::Win32::Foundation::HANDLE(effect_mem.0));
+                let _ = SetClipboardData(cf, Some(windows::Win32::Foundation::HANDLE(effect_mem.0)));
             }
         }
 
@@ -129,7 +129,7 @@ pub fn paste_files_from_clipboard() -> Option<(Vec<std::path::PathBuf>, bool)> {
     use windows::Win32::UI::Shell::*;
 
     unsafe {
-        if OpenClipboard(HWND::default()).is_err() {
+        if OpenClipboard(Some(HWND::default())).is_err() {
             return None;
         }
 

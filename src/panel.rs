@@ -395,12 +395,12 @@ impl FilePanel {
         self.is_loading = true;
         self.loading_generation += 1;
 
-        let gen = self.loading_generation;
+        let generation = self.loading_generation;
         let result = Arc::clone(&self.loading_result);
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
             let entries = read_directory(&dir);
-            *result.lock().unwrap() = Some((gen, entries, None));
+            *result.lock().unwrap() = Some((generation, entries, None));
             repaint_ctx.request_repaint();
         });
     }
@@ -425,13 +425,13 @@ impl FilePanel {
         self.loading_generation += 1;
         self.loading_old_name = None;
 
-        let gen = self.loading_generation;
+        let generation = self.loading_generation;
         let result = Arc::clone(&self.loading_result);
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
             let dir = resolver();
             let entries = read_directory(&dir);
-            *result.lock().unwrap() = Some((gen, entries, Some(dir)));
+            *result.lock().unwrap() = Some((generation, entries, Some(dir)));
             repaint_ctx.request_repaint();
         });
     }
@@ -442,8 +442,8 @@ impl FilePanel {
             return false;
         }
         let data = self.loading_result.lock().unwrap().take();
-        if let Some((gen, entries, resolved_dir)) = data {
-            if gen != self.loading_generation {
+        if let Some((generation, entries, resolved_dir)) = data {
+            if generation != self.loading_generation {
                 return false; // stale result from a superseded navigation
             }
             // Update current_dir if the background thread resolved the actual path
@@ -638,7 +638,7 @@ impl FilePanel {
             let font_id = egui::TextStyle::Body.resolve(ui.style());
             let available = ui.available_width();
             let display = truncate_middle_px(&path_str, available, |c| {
-                ui.fonts(|f| f.glyph_width(&font_id, c))
+                ui.fonts_mut(|f| f.glyph_width(&font_id, c))
             });
             ui.strong(display);
         });
@@ -715,9 +715,9 @@ impl FilePanel {
 
         // Column widths: Ext/Size fixed, Date measured from actual text, Name gets the rest
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let char_w = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
+        let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, 'W'));
         let col_pad = char_w; // padding between data columns
-        let date_text_w = ui.fonts(|f| {
+        let date_text_w = ui.fonts_mut(|f| {
             f.layout_no_wrap("0000-00-00 00:00".to_string(), font_id.clone(), egui::Color32::WHITE).rect.width()
         });
         let ext_w = 90.0f32;
@@ -856,10 +856,10 @@ impl FilePanel {
                     let full_name = format!("{}{}", mark, name_display);
 
                     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                    let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
+                    let char_width = ui.fonts_mut(|f| f.glyph_width(&font_id, 'W'));
                     let col_pad = char_width; // 1 character width padding between columns
                     let name_text = truncate_middle_px(&full_name, name_w - col_pad, |c| {
-                        ui.fonts(|f| f.glyph_width(&font_id, c))
+                        ui.fonts_mut(|f| f.glyph_width(&font_id, c))
                     });
 
                     let x0 = row_rect.min.x;

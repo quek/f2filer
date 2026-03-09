@@ -776,7 +776,7 @@ pub fn get_drive_space(root: &str) -> Option<(u64, u64)> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
-    extern "system" {
+    unsafe extern "system" {
         fn GetDiskFreeSpaceExW(
             lpDirectoryName: *const u16,
             lpFreeBytesAvailableToCaller: *mut u64,

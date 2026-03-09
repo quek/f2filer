@@ -196,7 +196,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let message = dialog.message.clone();
         let mut open = true;
 
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         egui::Window::new(&title)
             .collapsible(false)
             .resizable(true)
@@ -244,7 +244,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .collapsible(false)
             .resizable(true)
             .constrain(true)
-            .default_pos(ctx.screen_rect().center())
+            .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
@@ -298,7 +298,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         let message = dialog.message.clone();
         let mut open = true;
 
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         egui::Window::new(&title)
             .collapsible(false)
             .resizable(true)
@@ -338,7 +338,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .collapsible(false)
             .resizable(true)
             .constrain(true)
-            .default_pos(ctx.screen_rect().center())
+            .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
@@ -443,7 +443,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             .collapsible(false)
             .resizable(true)
             .constrain(true)
-            .default_pos(ctx.screen_rect().center())
+            .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .open(&mut open)
             .show(ctx, |ui| {
@@ -526,7 +526,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                 .collapsible(false)
                 .resizable(true)
                 .constrain(true)
-                .default_pos(ctx.screen_rect().center())
+                .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.set_min_width(300.0);
@@ -558,7 +558,7 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     if let Some(dialog) = &mut state.settings {
         let mut open = true;
 
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         egui::Window::new("Settings")
             .collapsible(false)
             .resizable(true)
@@ -1083,10 +1083,7 @@ pub fn enumerate_system_fonts() -> Vec<(String, String)> {
 }
 
 fn collect_font_files(dir: &std::path::Path, fonts: &mut Vec<(String, String)>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {

@@ -16,9 +16,8 @@ pub struct AudioPreview {
     sample_rate: u32,
     duration_secs: f32,
     silence_skip_secs: f32,
-    sink: Option<rodio::Sink>,
-    _stream: Option<rodio::OutputStream>,
-    stream_handle: Option<rodio::OutputStreamHandle>,
+    sink: Option<rodio::Player>,
+    _stream: Option<rodio::MixerDeviceSink>,
     playing: bool,
     play_start: Option<Instant>,
     pause_offset: f32,
@@ -112,8 +111,8 @@ fn scan_wav_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
 fn scan_generic_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     let file = std::fs::File::open(path).ok()?;
     let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
-    let sample_rate = decoder.sample_rate();
-    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate().get();
+    let channels = decoder.channels().get();
 
     // Decode all samples to compute duration and detect silence
     let max_silence_samples = sample_rate as usize * channels as usize * 5;
@@ -124,7 +123,7 @@ fn scan_generic_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> 
     let mut silence_done = false;
 
     for sample in decoder {
-        let s = sample as f32 / i16::MAX as f32;
+        let s = sample;
         total_samples += 1;
 
         if !silence_done {
@@ -166,10 +165,7 @@ fn load_waveform_background(
 
 /// WAV waveform loading using hound.
 fn load_waveform_wav(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
-    let reader = match hound::WavReader::open(path) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    let Ok(reader) = hound::WavReader::open(path) else { return };
     let spec = reader.spec();
     let channels = spec.channels as usize;
 
@@ -205,17 +201,11 @@ fn load_waveform_wav(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
 
 /// Generic waveform loading using rodio::Decoder for OGG/AIFF etc.
 fn load_waveform_generic(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
-    let file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return,
-    };
-    let decoder = match rodio::Decoder::new(BufReader::new(file)) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    let channels = decoder.channels() as usize;
+    let Ok(file) = std::fs::File::open(path) else { return };
+    let Ok(decoder) = rodio::Decoder::new(BufReader::new(file)) else { return };
+    let channels = decoder.channels().get() as usize;
 
-    let raw_samples: Vec<f32> = decoder.map(|s| s as f32 / i16::MAX as f32).collect();
+    let raw_samples: Vec<f32> = decoder.collect();
 
     let mono: Vec<f32> = if channels > 1 {
         raw_samples
@@ -242,10 +232,7 @@ pub fn load(path: &Path, ctx: &egui::Context) -> Option<AudioPreview> {
         .unwrap_or_default();
 
     // Initialize audio output stream
-    let (stream, stream_handle) = match rodio::OutputStream::try_default() {
-        Ok((s, h)) => (Some(s), Some(h)),
-        Err(_) => (None, None),
-    };
+    let stream = rodio::DeviceSinkBuilder::open_default_sink().ok();
 
     // Start background waveform loading
     let waveform = Arc::new(Mutex::new(Vec::new()));
@@ -261,7 +248,6 @@ pub fn load(path: &Path, ctx: &egui::Context) -> Option<AudioPreview> {
         silence_skip_secs: silence_secs,
         sink: None,
         _stream: stream,
-        stream_handle,
         playing: false,
         play_start: None,
         pause_offset: 0.0,
@@ -457,25 +443,10 @@ impl AudioPreview {
     }
 
     fn start_playback(&mut self) {
-        let handle = match &self.stream_handle {
-            Some(h) => h,
-            None => return,
-        };
-
-        let file = match std::fs::File::open(&self.path) {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-
-        let source = match rodio::Decoder::new(BufReader::new(file)) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        let sink = match rodio::Sink::try_new(handle) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let Some(stream) = &self._stream else { return };
+        let Ok(file) = std::fs::File::open(&self.path) else { return };
+        let Ok(source) = rodio::Decoder::new(BufReader::new(file)) else { return };
+        let sink = rodio::Player::connect_new(stream.mixer());
 
         // Skip initial silence
         if self.silence_skip_secs > 0.01 {

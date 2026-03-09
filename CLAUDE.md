@@ -67,6 +67,12 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 
 ### ベストプラクティスを追求する
 - 最新のベストプラクティスでの実装を行なう
+- 各 crate は最新のバージョンを使用する。依存関係の更新時は API の破壊的変更に注意
+- Rust Edition 2024 を使用。モダンな Rust イディオムを積極的に採用する:
+  - `let-else`: `match ... { Ok(x) => x, Err(_) => return }` の代わりに `let Ok(x) = ... else { return };` を使用
+  - `unsafe extern`: extern ブロックには `unsafe extern` を使用（Edition 2024 で必須）
+  - `gen` は予約語のため変数名に使用しない
+  - `?` 演算子: `Result`/`Option` の早期リターンには `match` より `?` を優先
 
 ### KISS (Keep It Simple, Stupid)
 - 最小限の実装で目的を達成する

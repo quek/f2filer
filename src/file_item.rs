@@ -202,10 +202,7 @@ pub fn read_directory_recursive_streaming(
     queue.push_back(root.to_path_buf());
 
     while let Some(dir) = queue.pop_front() {
-        let read_dir = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => continue,
-        };
+        let Ok(read_dir) = std::fs::read_dir(&dir) else { continue };
         for entry in read_dir.flatten() {
             let path = entry.path();
             let Some(mut item) = FileItem::from_path(&path) else {

@@ -379,7 +379,7 @@ impl F2App {
 
     fn handle_file_drop(&mut self, ctx: &egui::Context) {
         // Determine which panel the pointer is over (left half vs right half)
-        let screen_rect = ctx.screen_rect();
+        let screen_rect = ctx.content_rect();
         let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
         let is_left_half = pointer_pos
             .map(|p| p.x < screen_rect.center().x)

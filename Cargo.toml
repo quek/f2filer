@@ -1,11 +1,11 @@
 [package]
 name = "f2filer"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 [dependencies]
-eframe = "0.31"
+eframe = "0.33"
 chrono = "0.4"
 open = "5"
 trash = "5"
@@ -13,20 +13,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "ico"] }
 hound = "3"
-rodio = { version = "0.20", features = ["symphonia-aiff"] }
-zip = "2"
+rodio = { version = "0.22", features = ["symphonia-aiff"] }
+zip = "8"
 tar = "0.4"
 flate2 = "1"
 arboard = "3"
-resvg = "0.44"
+resvg = "0.47"
 
 [target.'cfg(windows)'.dependencies]
-windows-core = "0.58"
+windows-core = "0.62"
 
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
+version = "0.62"
 features = [
-    "implement",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_Ole",

@@ -56,8 +56,8 @@ pub struct VideoPreview {
     start_time: Instant,
     playing: bool,
     // Audio
-    sink: Option<rodio::Sink>,
-    _stream: Option<rodio::OutputStream>,
+    sink: Option<rodio::Player>,
+    _stream: Option<rodio::MixerDeviceSink>,
     // Decoder management
     _decoder_handle: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
@@ -178,13 +178,10 @@ pub fn load(path: &Path, ctx: &egui::Context) -> Option<VideoPreview> {
     );
 
     // Start audio playback
-    let (stream, stream_handle) = match rodio::OutputStream::try_default() {
-        Ok((s, h)) => (Some(s), Some(h)),
-        Err(_) => (None, None),
-    };
+    let stream = rodio::DeviceSinkBuilder::open_default_sink().ok();
 
-    let (sink, audio_child) = if let Some(ref handle) = stream_handle {
-        start_audio_playback(path, handle)
+    let (sink, audio_child) = if let Some(ref stream) = stream {
+        start_audio_playback(path, stream)
     } else {
         (None, None)
     };
@@ -220,7 +217,7 @@ fn start_frame_decoder(
     let path_str = path.to_string_lossy().to_string();
 
     let handle = thread::spawn(move || {
-        let mut child = match Command::new("ffmpeg")
+        let Ok(mut child) = Command::new("ffmpeg")
             .args([
                 "-i", &path_str,
                 "-f", "rawvideo",
@@ -233,15 +230,9 @@ fn start_frame_decoder(
             .stderr(Stdio::null())
             .creation_flags(0x08000000)
             .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+        else { return };
 
-        let stdout = match child.stdout.take() {
-            Some(s) => s,
-            None => return,
-        };
+        let Some(stdout) = child.stdout.take() else { return };
 
         let mut reader = std::io::BufReader::with_capacity(frame_size * 2, stdout);
         let mut frame_idx: u64 = 0;
@@ -303,25 +294,25 @@ struct PcmPipeSource {
 }
 
 impl Iterator for PcmPipeSource {
-    type Item = i16;
-    fn next(&mut self) -> Option<i16> {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> {
         let mut buf = [0u8; 2];
         self.reader.read_exact(&mut buf).ok()?;
-        Some(i16::from_le_bytes(buf))
+        Some(i16::from_le_bytes(buf) as f32 / i16::MAX as f32)
     }
 }
 
 impl Source for PcmPipeSource {
-    fn current_frame_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> u16 { self.channels }
-    fn sample_rate(&self) -> u32 { self.sample_rate }
+    fn current_span_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(self.channels).unwrap() }
+    fn sample_rate(&self) -> std::num::NonZeroU32 { std::num::NonZeroU32::new(self.sample_rate).unwrap() }
     fn total_duration(&self) -> Option<Duration> { None }
 }
 
 fn start_audio_playback(
     path: &Path,
-    stream_handle: &rodio::OutputStreamHandle,
-) -> (Option<rodio::Sink>, Option<Child>) {
+    stream: &rodio::MixerDeviceSink,
+) -> (Option<rodio::Player>, Option<Child>) {
     let path_str = path.to_string_lossy().to_string();
 
     let mut child = match Command::new("ffmpeg")
@@ -354,10 +345,7 @@ fn start_audio_playback(
         sample_rate: 44100,
     };
 
-    let sink = match rodio::Sink::try_new(stream_handle) {
-        Ok(s) => s,
-        Err(_) => return (None, Some(child)),
-    };
+    let sink = rodio::Player::connect_new(stream.mixer());
 
     sink.append(source);
 

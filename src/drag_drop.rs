@@ -57,7 +57,7 @@ impl Drop for FileDataObject {
     fn drop(&mut self) {
         unsafe {
             if !self.hglobal.0.is_null() {
-                let _ = GlobalFree(self.hglobal);
+                let _ = GlobalFree(Some(self.hglobal));
             }
         }
     }
@@ -148,7 +148,7 @@ impl IDataObject_Impl for FileDataObject_Impl {
         &self,
         _pformatetc: *const FORMATETC,
         _advf: u32,
-        _padvsink: Option<&IAdviseSink>,
+        _padvsink: windows_core::Ref<'_, IAdviseSink>,
     ) -> Result<u32> {
         Err(Error::new(E_NOTIMPL, ""))
     }
@@ -260,10 +260,7 @@ pub fn start_drag(paths: &[PathBuf]) -> bool {
     }
 
     unsafe {
-        let hglobal = match build_hdrop(paths) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
+        let Ok(hglobal) = build_hdrop(paths) else { return false };
 
         let data_obj: IDataObject = FileDataObject { hglobal }.into();
         let drop_source: IDropSource = DropSource.into();
