@@ -614,6 +614,10 @@ pub fn compress_to_zip_with_progress(
     }
     let zip_path = dest_dir.join(&name);
 
+    // Pre-calculate total bytes
+    let total_bytes = calculate_total_size(sources);
+    progress.set_total_bytes(total_bytes);
+
     let file = match fs::File::create(&zip_path) {
         Ok(f) => f,
         Err(e) => {
@@ -623,37 +627,34 @@ pub fn compress_to_zip_with_progress(
     };
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
 
     let mut errors = Vec::new();
-    for (i, src) in sources.iter().enumerate() {
+    let mut completed_bytes: u64 = 0;
+    for src in sources.iter() {
         if progress.is_cancelled() {
             break;
         }
-        let src_name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        progress.update(&src_name, i);
 
         let result = if src.is_dir() {
-            add_dir_to_zip(&mut zip, src, src.file_name().unwrap().as_ref(), options)
+            add_dir_to_zip_with_progress(&mut zip, src, src.file_name().unwrap().as_ref(), options, progress, &mut completed_bytes)
         } else {
-            add_file_to_zip(&mut zip, src, &src_name, options)
+            let src_name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            add_file_to_zip_with_progress(&mut zip, src, &src_name, options, progress, &mut completed_bytes)
         };
         if let Err(e) = result {
+            if progress.is_cancelled() {
+                break;
+            }
             errors.push(e.to_string());
         }
-        progress.update(&src_name, i + 1);
     }
 
     if progress.is_cancelled() {
-        // Drop zip writer before removing file
         let _ = zip.finish();
         let _ = fs::remove_file(&zip_path);
-        progress.finish(
-            format!("Cancelled ({}/{})", sources.len().min(progress.state.lock().map(|s| s.completed).unwrap_or(0)), sources.len()),
-            Vec::new(),
-            None,
-            None,
-        );
+        progress.finish("Cancelled".to_string(), Vec::new(), None, None);
         return;
     }
 
@@ -705,12 +706,17 @@ pub fn decompress_zip_with_progress(
         }
     };
 
-    // Update total to number of entries in zip
-    if let Ok(mut s) = progress.state.lock() {
-        s.total = archive.len();
+    // Pre-calculate total uncompressed bytes
+    let mut total_bytes: u64 = 0;
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            total_bytes += entry.size();
+        }
     }
+    progress.set_total_bytes(total_bytes);
 
     let mut errors = Vec::new();
+    let mut completed_bytes: u64 = 0;
     for i in 0..archive.len() {
         if progress.is_cancelled() {
             break;
@@ -727,13 +733,11 @@ pub fn decompress_zip_with_progress(
         let entry_name = entry.enclosed_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        progress.update(&entry_name, i);
 
         let out_path = match entry.enclosed_name() {
             Some(name) => extract_dir.join(name),
             None => {
                 errors.push("Invalid zip entry name".to_string());
-                progress.update(&entry_name, i + 1);
                 continue;
             }
         };
@@ -746,31 +750,27 @@ pub fn decompress_zip_with_progress(
             if let Some(parent) = out_path.parent() {
                 if let Err(e) = fs::create_dir_all(parent) {
                     errors.push(e.to_string());
-                    progress.update(&entry_name, i + 1);
                     continue;
                 }
             }
             match fs::File::create(&out_path) {
                 Ok(mut outfile) => {
-                    if let Err(e) = std::io::copy(&mut entry, &mut outfile) {
+                    if let Err(e) = copy_stream_with_progress(
+                        &mut entry, &mut outfile, progress, &entry_name, &mut completed_bytes,
+                    ) {
+                        if progress.is_cancelled() {
+                            break;
+                        }
                         errors.push(e.to_string());
                     }
                 }
                 Err(e) => errors.push(e.to_string()),
             }
         }
-        progress.update(&entry_name, i + 1);
     }
 
-    let total = archive.len();
-    let completed = if progress.is_cancelled() {
-        progress.state.lock().map(|s| s.completed).unwrap_or(0)
-    } else {
-        total
-    };
-
     let msg = if progress.is_cancelled() {
-        format!("Cancelled ({}/{})", completed, total)
+        "Cancelled".to_string()
     } else if errors.is_empty() {
         format!("Extracted to: {}", extract_dir.display())
     } else {
@@ -1011,7 +1011,8 @@ pub fn compress_to_zip(
     let file = fs::File::create(&zip_path)?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
 
     for src in sources {
         if src.is_dir() {
@@ -1057,6 +1058,95 @@ fn add_dir_to_zip(
         } else {
             let name_str = name.to_string_lossy().replace('\\', "/");
             add_file_to_zip(zip, &path, &name_str, options)?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy from a reader to a writer in chunks, tracking byte progress and checking cancel.
+fn copy_stream_with_progress(
+    reader: &mut dyn std::io::Read,
+    writer: &mut dyn std::io::Write,
+    progress: &ProgressHandle,
+    file_name: &str,
+    completed_bytes: &mut u64,
+) -> Result<(), FileOpError> {
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE];
+    loop {
+        if progress.is_cancelled() {
+            return Err(FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Cancelled",
+            )));
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n])?;
+        *completed_bytes += n as u64;
+        progress.update_bytes(file_name, *completed_bytes);
+    }
+    Ok(())
+}
+
+fn add_file_to_zip_with_progress(
+    zip: &mut zip::ZipWriter<fs::File>,
+    file_path: &Path,
+    name_in_zip: &str,
+    options: zip::write::SimpleFileOptions,
+    progress: &ProgressHandle,
+    completed_bytes: &mut u64,
+) -> Result<(), FileOpError> {
+    zip.start_file(name_in_zip, options)
+        .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let file_name = file_path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut f = fs::File::open(file_path)?;
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE];
+    loop {
+        if progress.is_cancelled() {
+            return Err(FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Cancelled",
+            )));
+        }
+        let n = std::io::Read::read(&mut f, &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        zip.write_all(&buf[..n])?;
+        *completed_bytes += n as u64;
+        progress.update_bytes(&file_name, *completed_bytes);
+    }
+    Ok(())
+}
+
+fn add_dir_to_zip_with_progress(
+    zip: &mut zip::ZipWriter<fs::File>,
+    dir_path: &Path,
+    prefix: &Path,
+    options: zip::write::SimpleFileOptions,
+    progress: &ProgressHandle,
+    completed_bytes: &mut u64,
+) -> Result<(), FileOpError> {
+    for entry in fs::read_dir(dir_path)? {
+        if progress.is_cancelled() {
+            return Err(FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Cancelled",
+            )));
+        }
+        let entry = entry?;
+        let path = entry.path();
+        let name = prefix.join(entry.file_name());
+
+        if path.is_dir() {
+            add_dir_to_zip_with_progress(zip, &path, &name, options, progress, completed_bytes)?;
+        } else {
+            let name_str = name.to_string_lossy().replace('\\', "/");
+            add_file_to_zip_with_progress(zip, &path, &name_str, options, progress, completed_bytes)?;
         }
     }
     Ok(())
