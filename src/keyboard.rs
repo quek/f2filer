@@ -52,6 +52,7 @@ struct KeyState {
     ctrl_comma: bool,
     plus: bool,
     minus: bool,
+    s: bool,
     alt_f: bool,
     escape: bool,
 }
@@ -103,6 +104,7 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         ctrl_comma: i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl,
         plus: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "+")),
         minus: i.key_pressed(egui::Key::Minus) && i.modifiers.is_none(),
+        s: i.key_pressed(egui::Key::S) && i.modifiers.is_none(),
         alt_f: i.key_pressed(egui::Key::F) && i.modifiers.alt,
         escape: i.key_pressed(egui::Key::Escape),
     })
@@ -144,6 +146,40 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
     }
 
     let input = read_key_state(ctx);
+
+    // Sort chord: s then n/e/s/d
+    if app.sort_pending {
+        // Wait for a key press event (ignore mouse/pointer events)
+        let any_key = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_))
+            })
+        });
+        if !any_key {
+            return; // No input yet, keep waiting
+        }
+        app.sort_pending = false;
+        let sort_key = if input.n {
+            Some(crate::sort::SortKey::Name)
+        } else if input.e {
+            Some(crate::sort::SortKey::Extension)
+        } else if input.s {
+            Some(crate::sort::SortKey::Size)
+        } else if input.d {
+            Some(crate::sort::SortKey::Date)
+        } else {
+            None // Unrecognized key cancels sort mode
+        };
+        if let Some(key) = sort_key {
+            app.active_panel_mut().set_sort(key);
+        }
+        return;
+    }
+    // s: enter sort pending mode, skip all other handlers this frame
+    if input.s {
+        app.sort_pending = true;
+        return;
+    }
 
     handle_navigation(app, &input);
     handle_file_operations(app, ctx, &input);
@@ -576,6 +612,7 @@ Space / Ins    :  Toggle select
 a              :  Toggle select all / deselect
 f              :  Focus filter
 Alt+f          :  Recursive search (subdirectories)
+sn/se/ss/sd    :  Sort by name/ext/size/date
 o              :  Sync opposite panel
 c              :  Copy selected → opposite
 m              :  Move selected → opposite

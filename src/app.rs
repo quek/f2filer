@@ -42,6 +42,7 @@ pub struct F2App {
     window_size: Option<egui::Vec2>,
     pub(crate) undo_history: UndoHistory,
     skip_next_drop: bool,
+    pub(crate) sort_pending: bool,
 }
 
 impl F2App {
@@ -97,6 +98,7 @@ impl F2App {
             config,
             undo_history: UndoHistory::new(),
             skip_next_drop: false,
+            sort_pending: false,
         }
     }
 
