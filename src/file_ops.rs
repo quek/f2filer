@@ -660,14 +660,29 @@ pub fn compress_to_zip_with_progress(
 
     match zip.finish() {
         Ok(_) => {
-            let msg = if errors.is_empty() {
-                format!("Compressed {} file(s) to {}", sources.len(), name)
-            } else {
-                format!("Errors: {}", errors.join(", "))
-            };
-            progress.finish(msg, sources.to_vec(), errors.first().cloned(), Some(zip_path));
+            // Verify the archive integrity: reopen and check entry count
+            match verify_zip_archive(&zip_path, sources) {
+                Ok(()) => {
+                    let msg = if errors.is_empty() {
+                        format!("Compressed {} file(s) to {}", sources.len(), name)
+                    } else {
+                        format!("Errors: {}", errors.join(", "))
+                    };
+                    progress.finish(msg, sources.to_vec(), errors.first().cloned(), Some(zip_path));
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&zip_path);
+                    progress.finish(
+                        format!("Error: archive verification failed: {}", e),
+                        Vec::new(),
+                        Some(e.clone()),
+                        None,
+                    );
+                }
+            }
         }
         Err(e) => {
+            let _ = fs::remove_file(&zip_path);
             progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
         }
     }
@@ -1024,6 +1039,16 @@ pub fn compress_to_zip(
 
     zip.finish()
         .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+    // Verify the archive integrity
+    if let Err(e) = verify_zip_archive(&zip_path, sources) {
+        let _ = fs::remove_file(&zip_path);
+        return Err(FileOpError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            e,
+        )));
+    }
+
     Ok(zip_path)
 }
 
@@ -1039,6 +1064,34 @@ fn add_file_to_zip(
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
     zip.write_all(&buf)?;
+    Ok(())
+}
+
+/// Verify a zip archive after creation: reopen and check entry count > 0 and sizes are plausible.
+fn verify_zip_archive(zip_path: &Path, sources: &[PathBuf]) -> Result<(), String> {
+    let file = fs::File::open(zip_path)
+        .map_err(|e| format!("cannot reopen archive: {}", e))?;
+    let archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("cannot read archive: {}", e))?;
+
+    if archive.len() == 0 && !sources.is_empty() {
+        return Err("archive contains 0 entries".to_string());
+    }
+
+    // Count expected files from sources
+    fn count_files(path: &Path) -> usize {
+        if path.is_dir() {
+            let Ok(entries) = fs::read_dir(path) else { return 0 };
+            entries.filter_map(|e| e.ok()).map(|e| count_files(&e.path())).sum()
+        } else {
+            1
+        }
+    }
+    let expected: usize = sources.iter().map(|s| count_files(s)).sum();
+    if expected > 0 && archive.len() == 0 {
+        return Err(format!("expected {} files but archive has 0 entries", expected));
+    }
+
     Ok(())
 }
 

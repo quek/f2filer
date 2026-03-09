@@ -457,21 +457,65 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                     .unwrap_or_default();
                 let dest = app.inactive_panel().current_dir.clone();
                 if ext_lower == "zip" {
-                    app.start_background_op(
-                        ctx,
-                        OpKind::ZipDecompress {
-                            zip_path: entry.path.clone(),
-                            dest_dir: dest,
-                        },
-                    );
+                    let extract_name = entry.path.file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let extract_dir = dest.join(&extract_name);
+                    if extract_dir.exists() {
+                        app.dialog.confirm = Some(ConfirmDialog {
+                            title: "Overwrite?".to_string(),
+                            message: format!(
+                                "\"{}\" already exists.\n\nOverwrite?",
+                                extract_name
+                            ),
+                            action: ConfirmAction::ZipDecompressOverwrite {
+                                zip_path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        });
+                    } else {
+                        app.start_background_op(
+                            ctx,
+                            OpKind::ZipDecompress {
+                                zip_path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        );
+                    }
                 } else if name_lower.ends_with(".tar.gz") || ext_lower == "tgz" || ext_lower == "tar" {
-                    app.start_background_op(
-                        ctx,
-                        OpKind::TarDecompress {
-                            tar_path: entry.path.clone(),
-                            dest_dir: dest,
-                        },
-                    );
+                    // For tar, stem may be "foo.tar" for ".tar.gz" — get the base name
+                    let extract_name = if name_lower.ends_with(".tar.gz") {
+                        PathBuf::from(&entry.name)
+                            .file_stem()
+                            .and_then(|s| PathBuf::from(s).file_stem().map(|s2| s2.to_string_lossy().to_string()))
+                            .unwrap_or_default()
+                    } else {
+                        entry.path.file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    };
+                    let extract_dir = dest.join(&extract_name);
+                    if extract_dir.exists() {
+                        app.dialog.confirm = Some(ConfirmDialog {
+                            title: "Overwrite?".to_string(),
+                            message: format!(
+                                "\"{}\" already exists.\n\nOverwrite?",
+                                extract_name
+                            ),
+                            action: ConfirmAction::TarDecompressOverwrite {
+                                tar_path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        });
+                    } else {
+                        app.start_background_op(
+                            ctx,
+                            OpKind::TarDecompress {
+                                tar_path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        );
+                    }
                 }
             }
         }

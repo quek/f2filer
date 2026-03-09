@@ -76,6 +76,19 @@ pub enum ConfirmAction {
         sources: Vec<std::path::PathBuf>,
         dest: std::path::PathBuf,
     },
+    ZipCompressOverwrite {
+        sources: Vec<std::path::PathBuf>,
+        dest_dir: std::path::PathBuf,
+        zip_name: String,
+    },
+    ZipDecompressOverwrite {
+        zip_path: std::path::PathBuf,
+        dest_dir: std::path::PathBuf,
+    },
+    TarDecompressOverwrite {
+        tar_path: std::path::PathBuf,
+        dest_dir: std::path::PathBuf,
+    },
 }
 
 pub struct InputDialog {

@@ -36,6 +36,34 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     },
                 );
             }
+            ConfirmAction::ZipCompressOverwrite { sources, dest_dir, zip_name } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::ZipCompress {
+                        sources,
+                        dest_dir,
+                        zip_name,
+                    },
+                );
+            }
+            ConfirmAction::ZipDecompressOverwrite { zip_path, dest_dir } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::ZipDecompress {
+                        zip_path,
+                        dest_dir,
+                    },
+                );
+            }
+            ConfirmAction::TarDecompressOverwrite { tar_path, dest_dir } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::TarDecompress {
+                        tar_path,
+                        dest_dir,
+                    },
+                );
+            }
         },
         DialogResult::InputOk(value, action) => {
             if value.is_empty() {
@@ -106,14 +134,35 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 }
                 InputAction::ZipCompress(sources) => {
                     let dest = app.inactive_panel().current_dir.clone();
-                    app.start_background_op(
-                        ctx,
-                        OpKind::ZipCompress {
-                            sources,
-                            dest_dir: dest,
-                            zip_name: value,
-                        },
-                    );
+                    let zip_name = if value.ends_with(".zip") {
+                        value.clone()
+                    } else {
+                        format!("{}.zip", value)
+                    };
+                    let zip_path = dest.join(&zip_name);
+                    if zip_path.exists() {
+                        app.dialog.confirm = Some(ConfirmDialog {
+                            title: "Overwrite?".to_string(),
+                            message: format!(
+                                "\"{}\" already exists.\n\nOverwrite?",
+                                zip_name
+                            ),
+                            action: ConfirmAction::ZipCompressOverwrite {
+                                sources,
+                                dest_dir: dest,
+                                zip_name: value,
+                            },
+                        });
+                    } else {
+                        app.start_background_op(
+                            ctx,
+                            OpKind::ZipCompress {
+                                sources,
+                                dest_dir: dest,
+                                zip_name: value,
+                            },
+                        );
+                    }
                 }
             }
         }
