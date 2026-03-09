@@ -1,5 +1,9 @@
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
+
+use eframe::egui;
 
 #[derive(Clone, Debug)]
 pub struct FileItem {
@@ -178,4 +182,66 @@ pub fn read_directory(dir: &Path) -> Vec<FileItem> {
     }
 
     entries
+}
+
+const RECURSIVE_SEARCH_LIMIT: usize = 100_000;
+const RECURSIVE_BATCH_SIZE: usize = 500;
+
+/// Recursively collect files under `root` in BFS order, streaming batches
+/// into `sink`. Sets `done` to true when finished. Respects `show_hidden`.
+pub fn read_directory_recursive_streaming(
+    root: &Path,
+    show_hidden: bool,
+    sink: &Mutex<Vec<FileItem>>,
+    done: &std::sync::atomic::AtomicBool,
+    repaint: &egui::Context,
+) {
+    let mut batch = Vec::with_capacity(RECURSIVE_BATCH_SIZE);
+    let mut total = 0usize;
+    let mut queue = VecDeque::new();
+    queue.push_back(root.to_path_buf());
+
+    while let Some(dir) = queue.pop_front() {
+        let read_dir = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let Some(mut item) = FileItem::from_path(&path) else {
+                continue;
+            };
+            if !show_hidden && item.is_hidden {
+                continue;
+            }
+            if item.is_dir {
+                queue.push_back(path);
+                continue;
+            }
+            // Set name to relative path from root
+            if let Ok(rel) = path.strip_prefix(root) {
+                item.name = rel.to_string_lossy().replace('\\', "/");
+            }
+            batch.push(item);
+            total += 1;
+            if batch.len() >= RECURSIVE_BATCH_SIZE {
+                sink.lock().unwrap().append(&mut batch);
+                repaint.request_repaint();
+            }
+            if total >= RECURSIVE_SEARCH_LIMIT {
+                if !batch.is_empty() {
+                    sink.lock().unwrap().append(&mut batch);
+                }
+                done.store(true, std::sync::atomic::Ordering::Release);
+                repaint.request_repaint();
+                return;
+            }
+        }
+    }
+
+    if !batch.is_empty() {
+        sink.lock().unwrap().append(&mut batch);
+    }
+    done.store(true, std::sync::atomic::Ordering::Release);
+    repaint.request_repaint();
 }

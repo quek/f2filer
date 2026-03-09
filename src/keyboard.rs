@@ -52,6 +52,8 @@ struct KeyState {
     ctrl_comma: bool,
     plus: bool,
     minus: bool,
+    alt_f: bool,
+    escape: bool,
 }
 
 fn read_key_state(ctx: &egui::Context) -> KeyState {
@@ -84,7 +86,7 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         colon: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == ":")),
         question: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "?")),
         p: i.key_pressed(egui::Key::P),
-        f: i.key_pressed(egui::Key::F),
+        f: i.key_pressed(egui::Key::F) && !i.modifiers.alt,
         v: i.key_pressed(egui::Key::V) && !i.modifiers.ctrl,
         enter: i.key_pressed(egui::Key::Enter) && !i.modifiers.alt,
         g: i.key_pressed(egui::Key::G) && !i.modifiers.shift,
@@ -101,6 +103,8 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         ctrl_comma: i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl,
         plus: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "+")),
         minus: i.key_pressed(egui::Key::Minus) && i.modifiers.is_none(),
+        alt_f: i.key_pressed(egui::Key::F) && i.modifiers.alt,
+        escape: i.key_pressed(egui::Key::Escape),
     })
 }
 
@@ -211,7 +215,22 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, input: &KeyState
     // l / Enter: open dir / execute file
     if input.l || input.enter {
         if let Some(entry) = app.active_panel().current_entry().cloned() {
-            if entry.is_dir {
+            if app.active_panel().recursive_filter {
+                // In recursive search mode: navigate to file's parent directory
+                if let Some(parent) = entry.path.parent() {
+                    let parent = parent.to_path_buf();
+                    let filename = entry
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string());
+                    app.active_panel_mut().exit_recursive_search();
+                    app.active_panel_mut().navigate_to(parent, ctx);
+                    if let Some(name) = filename {
+                        app.active_panel_mut().loading_old_name = Some(name);
+                    }
+                    app.save_config();
+                }
+            } else if entry.is_dir {
                 let dir = entry.path.clone();
                 app.active_panel_mut().navigate_to(dir, ctx);
                 app.save_config();
@@ -556,6 +575,7 @@ i              :  Switch panel
 Space / Ins    :  Toggle select
 a              :  Toggle select all / deselect
 f              :  Focus filter
+Alt+f          :  Recursive search (subdirectories)
 o              :  Sync opposite panel
 c              :  Copy selected → opposite
 m              :  Move selected → opposite
@@ -593,6 +613,23 @@ PgUp / PgDn    :  Page scroll
     // f: focus filter
     if input.f {
         app.active_panel_mut().focus_filter = true;
+    }
+
+    // Alt+f: toggle recursive search
+    if input.alt_f {
+        let panel = app.active_panel_mut();
+        if panel.recursive_filter {
+            panel.exit_recursive_search();
+        } else {
+            panel.recursive_filter = true;
+            panel.focus_filter = true;
+            panel.start_recursive_search(ctx);
+        }
+    }
+
+    // Esc: exit recursive search mode (when filter doesn't have focus)
+    if input.escape && app.active_panel().recursive_filter {
+        app.active_panel_mut().exit_recursive_search();
     }
 
     // p: drive selection

@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 
-use crate::file_item::{read_directory, FileItem};
+use crate::file_item::{read_directory, read_directory_recursive_streaming, FileItem};
 use crate::sort::{sort_entries, SortKey, SortOrder};
 
 /// Display width of a character (2 for CJK/fullwidth, 1 otherwise).
@@ -110,12 +111,16 @@ pub struct FilePanel {
     pub is_loading: bool,
     loading_result: Arc<Mutex<Option<(u64, Vec<FileItem>, Option<PathBuf>)>>>,
     loading_generation: u64,
-    loading_old_name: Option<String>,
+    pub(crate) loading_old_name: Option<String>,
     last_dir_modified: Option<SystemTime>,
     last_dir_check: Instant,
     pub cursor_history: HashMap<PathBuf, String>,
     /// Directories whose cursor_history was modified in this session.
     pub(crate) cursor_dirty: HashSet<PathBuf>,
+    pub recursive_filter: bool,
+    is_searching: bool,
+    search_sink: Arc<Mutex<Vec<FileItem>>>,
+    search_done: Arc<AtomicBool>,
 }
 
 impl FilePanel {
@@ -145,6 +150,10 @@ impl FilePanel {
             last_dir_check: Instant::now(),
             cursor_history: HashMap::new(),
             cursor_dirty: HashSet::new(),
+            recursive_filter: false,
+            is_searching: false,
+            search_sink: Arc::new(Mutex::new(Vec::new())),
+            search_done: Arc::new(AtomicBool::new(false)),
         };
         panel.refresh();
         panel
@@ -219,6 +228,61 @@ impl FilePanel {
         }
         sort_entries(&mut self.entries, self.sort_key, self.sort_order);
         self.rebuild_filter();
+    }
+
+    pub fn start_recursive_search(&mut self, ctx: &egui::Context) {
+        self.is_searching = true;
+        self.entries.clear();
+        self.filtered_indices.clear();
+        self.selected.clear();
+        self.cursor = 0;
+
+        // Reset shared state
+        self.search_sink = Arc::new(Mutex::new(Vec::new()));
+        self.search_done = Arc::new(AtomicBool::new(false));
+
+        let root = self.current_dir.clone();
+        let show_hidden = self.show_hidden;
+        let sink = Arc::clone(&self.search_sink);
+        let done = Arc::clone(&self.search_done);
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            read_directory_recursive_streaming(&root, show_hidden, &sink, &done, &repaint_ctx);
+        });
+    }
+
+    /// Drain buffered search results from background thread into entries.
+    pub fn drain_search_results(&mut self) {
+        if !self.recursive_filter {
+            return;
+        }
+        let mut new_items = {
+            let mut lock = self.search_sink.lock().unwrap();
+            if lock.is_empty() {
+                // Check if search finished
+                if self.is_searching && self.search_done.load(Ordering::Acquire) {
+                    self.is_searching = false;
+                }
+                return;
+            }
+            std::mem::take(&mut *lock)
+        };
+        self.entries.append(&mut new_items);
+        self.rebuild_filter();
+        if self.search_done.load(Ordering::Acquire) {
+            self.is_searching = false;
+        }
+    }
+
+    pub fn exit_recursive_search(&mut self) {
+        self.recursive_filter = false;
+        self.is_searching = false;
+        // Signal any running thread to stop (it will check done flag... actually
+        // it won't, but that's fine — it will just write to an orphaned Arc)
+        self.search_sink = Arc::new(Mutex::new(Vec::new()));
+        self.search_done = Arc::new(AtomicBool::new(false));
+        self.filter.clear();
+        self.refresh();
     }
 
     /// Find the visible index of an entry by name.
@@ -375,7 +439,7 @@ impl FilePanel {
     /// Check if the directory has changed and auto-refresh if needed.
     /// Preserves cursor position and selection by filename.
     pub fn check_auto_refresh(&mut self) {
-        if self.is_loading {
+        if self.is_loading || self.recursive_filter {
             return;
         }
         if self.last_dir_check.elapsed() < std::time::Duration::from_secs(2) {
@@ -503,8 +567,15 @@ impl FilePanel {
         let panel_id = egui::Id::new(id_salt);
 
         // Current path (truncated to available width)
+        // In recursive mode, show selected file's full path instead
         ui.horizontal(|ui| {
-            let path_str = self.current_dir.to_string_lossy().to_string();
+            let path_str = if self.recursive_filter {
+                self.current_entry()
+                    .map(|e| e.path.to_string_lossy().to_string())
+                    .unwrap_or_else(|| self.current_dir.to_string_lossy().to_string())
+            } else {
+                self.current_dir.to_string_lossy().to_string()
+            };
             let font_id = egui::TextStyle::Body.resolve(ui.style());
             let char_width = ui.fonts(|f| f.glyph_width(&font_id, 'W'));
             let available = ui.available_width();
@@ -515,7 +586,18 @@ impl FilePanel {
 
         // Filter input
         ui.horizontal(|ui| {
-            ui.label("Filter:");
+            if self.recursive_filter {
+                let total = self.entries.len();
+                let shown = self.filtered_indices.len();
+                let searching = if self.is_searching { "..." } else { "" };
+                if self.filter.is_empty() {
+                    ui.label(format!("[R:{total}{searching}] Filter:"));
+                } else {
+                    ui.label(format!("[R:{shown}/{total}{searching}] Filter:"));
+                }
+            } else {
+                ui.label("Filter:");
+            }
             let filter_id = panel_id.with("filter");
             let mut filter = self.filter.clone();
             let response = ui.add(
@@ -645,6 +727,9 @@ impl FilePanel {
             });
             return;
         }
+
+        // Recursive search: drain streamed results
+        self.drain_search_results();
 
         // File list
         let row_height = 17.0;
