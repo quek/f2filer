@@ -117,6 +117,8 @@ pub struct FilePanel {
     pub cursor_history: HashMap<PathBuf, String>,
     /// Directories whose cursor_history was modified in this session.
     pub(crate) cursor_dirty: HashSet<PathBuf>,
+    pub sort_history: HashMap<PathBuf, (SortKey, SortOrder)>,
+    pub(crate) sort_dirty: HashSet<PathBuf>,
     pub recursive_filter: bool,
     is_searching: bool,
     search_sink: Arc<Mutex<Vec<FileItem>>>,
@@ -150,6 +152,8 @@ impl FilePanel {
             last_dir_check: Instant::now(),
             cursor_history: HashMap::new(),
             cursor_dirty: HashSet::new(),
+            sort_history: HashMap::new(),
+            sort_dirty: HashSet::new(),
             recursive_filter: false,
             is_searching: false,
             search_sink: Arc::new(Mutex::new(Vec::new())),
@@ -228,6 +232,10 @@ impl FilePanel {
         }
         sort_entries(&mut self.entries, self.sort_key, self.sort_order);
         self.rebuild_filter();
+        // Save sort state for this directory
+        let dir = self.current_dir.clone();
+        self.sort_dirty.insert(dir.clone());
+        self.sort_history.insert(dir, (self.sort_key, self.sort_order));
     }
 
     pub fn start_recursive_search(&mut self, ctx: &egui::Context) {
@@ -297,6 +305,16 @@ impl FilePanel {
                     None
                 }
             })
+    }
+
+    /// Restore sort state from history for the current directory.
+    pub fn restore_sort_from_history(&mut self) {
+        if let Some(&(key, order)) = self.sort_history.get(&self.current_dir) {
+            self.sort_key = key;
+            self.sort_order = order;
+            sort_entries(&mut self.entries, self.sort_key, self.sort_order);
+            self.rebuild_filter();
+        }
     }
 
     /// Restore cursor position from history for the current directory.
@@ -400,6 +418,14 @@ impl FilePanel {
                 self.current_dir = dir;
             }
             self.entries = entries;
+            // Restore sort state for this directory, or default to name ascending
+            if let Some(&(key, order)) = self.sort_history.get(&self.current_dir) {
+                self.sort_key = key;
+                self.sort_order = order;
+            } else {
+                self.sort_key = SortKey::Name;
+                self.sort_order = SortOrder::Ascending;
+            }
             sort_entries(&mut self.entries, self.sort_key, self.sort_order);
             self.rebuild_filter();
             self.selected.clear();

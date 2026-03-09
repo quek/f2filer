@@ -77,6 +77,19 @@ impl F2App {
         left_panel.restore_cursor_from_history();
         right_panel.restore_cursor_from_history();
 
+        // Load sort history from config
+        let sort_history: std::collections::HashMap<PathBuf, (crate::sort::SortKey, crate::sort::SortOrder)> = config
+            .sort_dirs
+            .iter()
+            .filter_map(|(k, v)| {
+                crate::sort::sort_from_string(v).map(|sort| (PathBuf::from(k), sort))
+            })
+            .collect();
+        left_panel.sort_history = sort_history.clone();
+        right_panel.sort_history = sort_history;
+        left_panel.restore_sort_from_history();
+        right_panel.restore_sort_from_history();
+
         F2App {
             left_panel,
             right_panel,
@@ -267,6 +280,17 @@ impl F2App {
                     self.config
                         .cursor_dirs
                         .insert(dir.to_string_lossy().to_string(), name.clone());
+                }
+            }
+        }
+        // Save per-directory sort state (only entries modified this session)
+        for panel in [&self.left_panel, &self.right_panel] {
+            for dir in &panel.sort_dirty {
+                if let Some(&(key, order)) = panel.sort_history.get(dir) {
+                    self.config.sort_dirs.insert(
+                        dir.to_string_lossy().to_string(),
+                        crate::sort::sort_to_string(key, order),
+                    );
                 }
             }
         }

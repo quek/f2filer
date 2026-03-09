@@ -23,6 +23,39 @@ impl SortOrder {
     }
 }
 
+/// Serialize sort state to a compact string, e.g. "n+", "s-".
+pub fn sort_to_string(key: SortKey, order: SortOrder) -> String {
+    let k = match key {
+        SortKey::Name => 'n',
+        SortKey::Extension => 'e',
+        SortKey::Size => 's',
+        SortKey::Date => 'd',
+    };
+    let o = match order {
+        SortOrder::Ascending => '+',
+        SortOrder::Descending => '-',
+    };
+    format!("{k}{o}")
+}
+
+/// Deserialize sort state from a string like "n+", "s-".
+pub fn sort_from_string(s: &str) -> Option<(SortKey, SortOrder)> {
+    let mut chars = s.chars();
+    let key = match chars.next()? {
+        'n' => SortKey::Name,
+        'e' => SortKey::Extension,
+        's' => SortKey::Size,
+        'd' => SortKey::Date,
+        _ => return None,
+    };
+    let order = match chars.next()? {
+        '+' => SortOrder::Ascending,
+        '-' => SortOrder::Descending,
+        _ => return None,
+    };
+    Some((key, order))
+}
+
 pub fn sort_entries(entries: &mut [FileItem], key: SortKey, order: SortOrder) {
     if entries.is_empty() {
         return;
