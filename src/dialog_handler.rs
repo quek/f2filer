@@ -163,7 +163,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
         }
         DialogResult::FontSelected(font_path) => {
             app.config.font_path = font_path.clone();
-            crate::app::setup_fonts(ctx, app.config.font_path.as_deref());
+            crate::app::setup_fonts(ctx, app.config.font_path.as_deref(), app.config.font_size);
             app.config.save();
             let name = font_path
                 .as_ref()

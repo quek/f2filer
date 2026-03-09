@@ -50,6 +50,8 @@ struct KeyState {
     alt_enter: bool,
     backslash: bool,
     ctrl_comma: bool,
+    plus: bool,
+    minus: bool,
 }
 
 fn read_key_state(ctx: &egui::Context) -> KeyState {
@@ -97,6 +99,8 @@ fn read_key_state(ctx: &egui::Context) -> KeyState {
         alt_enter: i.key_pressed(egui::Key::Enter) && i.modifiers.alt,
         backslash: i.key_pressed(egui::Key::Backslash),
         ctrl_comma: i.key_pressed(egui::Key::Comma) && i.modifiers.ctrl,
+        plus: i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "+")),
+        minus: i.key_pressed(egui::Key::Minus) && i.modifiers.is_none(),
     })
 }
 
@@ -576,6 +580,7 @@ v              :  Preview (text/image/audio/video)
 Ctrl+R         :  Refresh
 .              :  Toggle hidden files
 :              :  Command mode
++ / -          :  Font size up / down
 Ctrl+,         :  Settings
 q / Ctrl+Q     :  Quit
 Alt+k / Alt+j  :  Jump to top / bottom
@@ -665,6 +670,20 @@ PgUp / PgDn    :  Page scroll
                 app.status_message = msg;
             }
         }
+    }
+
+    // +/-: font size
+    if input.plus || input.minus {
+        let current = app.config.font_size.unwrap_or(crate::app::DEFAULT_FONT_SIZE);
+        let new_size = if input.plus {
+            (current + 1.0).min(40.0)
+        } else {
+            (current - 1.0).max(8.0)
+        };
+        app.config.font_size = Some(new_size);
+        crate::app::apply_font_size(ctx, app.config.font_size);
+        app.config.save();
+        app.status_message = format!("Font size: {}", new_size);
     }
 
     // Ctrl+,: settings

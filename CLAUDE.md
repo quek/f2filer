@@ -38,6 +38,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - 画像キャッシュはLRU方式（最大20エントリ）、`wanted_path` で古い読み込み結果の表示を防止
 - GIFアニメーションは全フレームをデコードし、`Instant::now()` ベースのタイマーでループ再生
 - フォントはデフォルトで egui 組み込みフォントを使用。`config.json` の `font_path` でカスタムフォントを指定可能（`Ctrl+,` の設定画面からシステムフォント一覧を選択）。カスタムフォントは `setup_fonts()` で Proportional/Monospace 両方に設定し、egui 組み込みフォントがグリフ不足時のフォールバック
+- フォントサイズは `+`/`-` キーで動的に変更可能（8〜40pt、デフォルト16pt）。`apply_font_size()` で Small/Body/Monospace/Button/Heading を比率で一括設定
 - ウィンドウ位置・サイズは毎フレーム `viewport().outer_rect` / `inner_rect` で追跡し、config保存時に永続化
 - 登録ディレクトリはカスタムショートカットキー付き（デフォルト: ディレクトリ名の先頭文字）
 - WAVプレビューは再生（rodio ストリーミング）と波形読み込み（hound バックグラウンドスレッド）を分離して即時再生

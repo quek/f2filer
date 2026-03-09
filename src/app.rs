@@ -46,7 +46,7 @@ pub struct F2App {
 
 impl F2App {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
-        setup_fonts(&cc.egui_ctx, config.font_path.as_deref());
+        setup_fonts(&cc.egui_ctx, config.font_path.as_deref(), config.font_size);
 
         let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
         let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
@@ -868,7 +868,9 @@ mod tests {
     }
 }
 
-pub(crate) fn setup_fonts(ctx: &egui::Context, font_path: Option<&str>) {
+pub(crate) const DEFAULT_FONT_SIZE: f32 = 16.0;
+
+pub(crate) fn setup_fonts(ctx: &egui::Context, font_path: Option<&str>, font_size: Option<f32>) {
     if let Some(path) = font_path {
         if let Ok(font_data) = std::fs::read(path) {
             let mut fonts = egui::FontDefinitions::default();
@@ -894,26 +896,34 @@ pub(crate) fn setup_fonts(ctx: &egui::Context, font_path: Option<&str>) {
         }
     }
 
+    apply_font_size(ctx, font_size);
+}
+
+pub(crate) fn apply_font_size(ctx: &egui::Context, font_size: Option<f32>) {
+    let size = font_size.unwrap_or(DEFAULT_FONT_SIZE);
+    let small = (size * 0.75).round();
+    let heading = (size * 1.375).round();
+
     let mut style = (*ctx.style()).clone();
     style.text_styles.insert(
         egui::TextStyle::Small,
-        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        egui::FontId::new(small, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        egui::FontId::new(size, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
-        egui::FontId::new(16.0, egui::FontFamily::Monospace),
+        egui::FontId::new(size, egui::FontFamily::Monospace),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        egui::FontId::new(size, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(22.0, egui::FontFamily::Proportional),
+        egui::FontId::new(heading, egui::FontFamily::Proportional),
     );
     ctx.set_style(style);
 }
