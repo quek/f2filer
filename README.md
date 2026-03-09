@@ -24,7 +24,7 @@ Windows 用の2画面ファイラー。
 ## 必要環境
 
 ### 実行時
-- 動画プレビューには [ffmpeg](https://ffmpeg.org/)（ffmpeg / ffprobe）が PATH に必要
+- 動画プレビューには [ffmpeg](https://ffmpeg.org/)（ffmpeg / ffprobe）が PATH に必要（`winget install ffmpeg` でインストール可能）
 - 日本語表示には CJK 対応フォントの設定を推奨（`Ctrl+,` で設定画面からシステムフォントを選択可能）
 
 ### 開発時
