@@ -27,37 +27,40 @@ impl From<std::io::Error> for FileOpError {
     }
 }
 
-pub fn copy_file_or_dir(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
-    copy_file_or_dir_inner(src, dest_dir, false)
-}
-
+/// Copy a file or directory with overwrite (without progress tracking).
+/// Used by cross-filesystem move fallback and undo/redo.
 pub fn copy_file_or_dir_overwrite(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
-    copy_file_or_dir_inner(src, dest_dir, true)
-}
-
-fn copy_file_or_dir_inner(src: &Path, dest_dir: &Path, overwrite: bool) -> Result<(), FileOpError> {
     let file_name = src
         .file_name()
         .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "No file name",
         )))?;
-
     let dest_path = dest_dir.join(file_name);
 
-    if dest_path.exists() && !overwrite {
-        return Err(FileOpError::AlreadyExists(dest_path));
-    }
-
     if src.is_dir() {
-        if dest_path.exists() && overwrite {
+        if dest_path.exists() {
             fs::remove_dir_all(&dest_path)?;
         }
-        copy_dir_recursive(src, &dest_path)?;
+        copy_dir_simple(src, &dest_path)?;
     } else {
         fs::copy(src, &dest_path)?;
     }
+    Ok(())
+}
 
+fn copy_dir_simple(src: &Path, dest: &Path) -> Result<(), FileOpError> {
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_simple(&src_path, &dest_path)?;
+        } else {
+            fs::copy(&src_path, &dest_path)?;
+        }
+    }
     Ok(())
 }
 
@@ -76,24 +79,6 @@ pub fn check_conflicts(sources: &[PathBuf], dest_dir: &Path) -> Vec<String> {
             })
         })
         .collect()
-}
-
-fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), FileOpError> {
-    fs::create_dir_all(dest)?;
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path)?;
-        } else {
-            fs::copy(&src_path, &dest_path)?;
-        }
-    }
-
-    Ok(())
 }
 
 pub fn move_file_or_dir(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
@@ -291,6 +276,8 @@ pub struct ProgressState {
     pub current_file: String,
     pub completed: usize,
     pub total: usize,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
     pub finished: bool,
     pub cancelled: bool,
     pub error: Option<String>,
@@ -307,6 +294,8 @@ impl ProgressHandle {
                 current_file: String::new(),
                 completed: 0,
                 total,
+                completed_bytes: 0,
+                total_bytes: 0,
                 finished: false,
                 cancelled: false,
                 error: None,
@@ -330,6 +319,19 @@ impl ProgressHandle {
         if let Ok(mut s) = self.state.lock() {
             s.current_file = current_file.to_string();
             s.completed = completed;
+        }
+    }
+
+    fn update_bytes(&self, current_file: &str, completed_bytes: u64) {
+        if let Ok(mut s) = self.state.lock() {
+            s.current_file = current_file.to_string();
+            s.completed_bytes = completed_bytes;
+        }
+    }
+
+    fn set_total_bytes(&self, total_bytes: u64) {
+        if let Ok(mut s) = self.state.lock() {
+            s.total_bytes = total_bytes;
         }
     }
 
@@ -367,6 +369,7 @@ fn run_batch_with_progress<F>(
             Ok(()) => succeeded.push(path.clone()),
             Err(e) => errors.push(e.to_string()),
         }
+        progress.update(&name, i + 1);
     }
 
     let count = succeeded.len();
@@ -381,20 +384,187 @@ fn run_batch_with_progress<F>(
     progress.finish(msg, succeeded, errors.first().cloned(), None);
 }
 
+/// Calculate total size of files (recursing into directories).
+fn calculate_total_size(paths: &[PathBuf]) -> u64 {
+    let mut total: u64 = 0;
+    for path in paths {
+        if path.is_dir() {
+            total += dir_size_recursive(path);
+        } else if let Ok(meta) = fs::metadata(path) {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+fn dir_size_recursive(dir: &Path) -> u64 {
+    let mut size: u64 = 0;
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if path.is_dir() {
+            size += dir_size_recursive(&path);
+        } else if let Ok(meta) = entry.metadata() {
+            size += meta.len();
+        }
+    }
+    size
+}
+
+const COPY_CHUNK_SIZE: usize = 256 * 1024; // 256KB
+
+/// Copy a single file in chunks, updating byte progress and checking cancel.
+/// Returns bytes copied. On cancel, removes the partial destination file.
+fn copy_file_chunked(
+    src: &Path,
+    dest: &Path,
+    progress: &ProgressHandle,
+    completed_bytes: &mut u64,
+) -> Result<(), FileOpError> {
+    let mut reader = std::io::BufReader::with_capacity(
+        COPY_CHUNK_SIZE,
+        fs::File::open(src)?,
+    );
+    let mut writer = std::io::BufWriter::with_capacity(
+        COPY_CHUNK_SIZE,
+        fs::File::create(dest)?,
+    );
+
+    let file_name = src.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE];
+    loop {
+        if progress.is_cancelled() {
+            drop(writer);
+            let _ = fs::remove_file(dest);
+            return Err(FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Cancelled",
+            )));
+        }
+
+        let n = std::io::Read::read(&mut reader, &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        std::io::Write::write_all(&mut writer, &buf[..n])?;
+        *completed_bytes += n as u64;
+        progress.update_bytes(&file_name, *completed_bytes);
+    }
+
+    // Copy file permissions
+    if let Ok(meta) = fs::metadata(src) {
+        let _ = fs::set_permissions(dest, meta.permissions());
+    }
+
+    Ok(())
+}
+
+/// Recursively copy a directory with chunked file copy for progress tracking.
+fn copy_dir_recursive_with_progress(
+    src: &Path,
+    dest: &Path,
+    progress: &ProgressHandle,
+    completed_bytes: &mut u64,
+) -> Result<(), FileOpError> {
+    fs::create_dir_all(dest)?;
+
+    for entry in fs::read_dir(src)? {
+        if progress.is_cancelled() {
+            return Err(FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Cancelled",
+            )));
+        }
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive_with_progress(&src_path, &dest_path, progress, completed_bytes)?;
+        } else {
+            copy_file_chunked(&src_path, &dest_path, progress, completed_bytes)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn copy_batch_with_progress(
     sources: &[PathBuf],
     dest_dir: &Path,
     overwrite: bool,
     progress: &ProgressHandle,
 ) {
-    let dest = dest_dir.to_path_buf();
-    run_batch_with_progress(sources, progress, "Copied", |src| {
-        if overwrite {
-            copy_file_or_dir_overwrite(src, &dest)
-        } else {
-            copy_file_or_dir(src, &dest)
+    // Pre-calculate total bytes
+    let total_bytes = calculate_total_size(sources);
+    progress.set_total_bytes(total_bytes);
+
+    let mut succeeded = Vec::new();
+    let mut errors = Vec::new();
+    let mut completed_bytes: u64 = 0;
+
+    for (i, src) in sources.iter().enumerate() {
+        if progress.is_cancelled() {
+            break;
         }
-    });
+
+        let file_name = src.file_name()
+            .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No file name",
+            )));
+        let file_name = match file_name {
+            Ok(n) => n,
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            }
+        };
+
+        let dest_path = dest_dir.join(file_name);
+
+        if dest_path.exists() && !overwrite {
+            errors.push(FileOpError::AlreadyExists(dest_path).to_string());
+            continue;
+        }
+
+        let result = if src.is_dir() {
+            if dest_path.exists() && overwrite {
+                let _ = fs::remove_dir_all(&dest_path);
+            }
+            copy_dir_recursive_with_progress(src, &dest_path, progress, &mut completed_bytes)
+        } else {
+            copy_file_chunked(src, &dest_path, progress, &mut completed_bytes)
+        };
+
+        match result {
+            Ok(()) => {
+                succeeded.push(src.clone());
+                progress.update(&file_name.to_string_lossy(), i + 1);
+            }
+            Err(e) => {
+                if progress.is_cancelled() {
+                    break;
+                }
+                errors.push(e.to_string());
+            }
+        }
+    }
+
+    let count = succeeded.len();
+    let total = sources.len();
+    let msg = if progress.is_cancelled() {
+        format!("Cancelled ({}/{})", count, total)
+    } else if errors.is_empty() {
+        format!("Copied {} item(s)", total)
+    } else {
+        format!("Errors: {}", errors.join(", "))
+    };
+    progress.finish(msg, succeeded, errors.first().cloned(), None);
 }
 
 pub fn move_batch_with_progress(
@@ -471,6 +641,7 @@ pub fn compress_to_zip_with_progress(
         if let Err(e) = result {
             errors.push(e.to_string());
         }
+        progress.update(&src_name, i + 1);
     }
 
     if progress.is_cancelled() {
@@ -562,6 +733,7 @@ pub fn decompress_zip_with_progress(
             Some(name) => extract_dir.join(name),
             None => {
                 errors.push("Invalid zip entry name".to_string());
+                progress.update(&entry_name, i + 1);
                 continue;
             }
         };
@@ -574,6 +746,7 @@ pub fn decompress_zip_with_progress(
             if let Some(parent) = out_path.parent() {
                 if let Err(e) = fs::create_dir_all(parent) {
                     errors.push(e.to_string());
+                    progress.update(&entry_name, i + 1);
                     continue;
                 }
             }
@@ -586,6 +759,7 @@ pub fn decompress_zip_with_progress(
                 Err(e) => errors.push(e.to_string()),
             }
         }
+        progress.update(&entry_name, i + 1);
     }
 
     let total = archive.len();

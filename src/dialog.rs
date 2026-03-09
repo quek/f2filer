@@ -4,6 +4,21 @@ use crate::config::RegisteredDir;
 use crate::file_ops;
 use crate::keybind::{Action, KeyBinding, KeyBindings, ACTION_DISPLAY_ORDER};
 
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 #[derive(Default)]
 pub struct DialogState {
     pub confirm: Option<ConfirmDialog>,
@@ -502,19 +517,21 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
 
     // Progress dialog
     if let Some(progress) = &state.progress {
-        let (op_label, current_file, completed, total, finished) = {
+        let (op_label, current_file, completed, total, completed_bytes, total_bytes, finished) = {
             match progress.handle.state.lock() {
                 Ok(s) => (
                     s.op_label.clone(),
                     s.current_file.clone(),
                     s.completed,
                     s.total,
+                    s.completed_bytes,
+                    s.total_bytes,
                     s.finished,
                 ),
                 Err(_) => {
                     // Mutex poisoned — treat as finished with error
                     result = DialogResult::ProgressFinished;
-                    ("Error".to_string(), String::new(), 0, 0, true)
+                    ("Error".to_string(), String::new(), 0, 0, 0, 0, true)
                 }
             }
         };
@@ -530,11 +547,21 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.set_min_width(300.0);
-                    ui.label(format!("{} / {}", completed, total));
+                    if total_bytes > 0 {
+                        ui.label(format!(
+                            "{} / {}",
+                            format_bytes(completed_bytes),
+                            format_bytes(total_bytes),
+                        ));
+                    } else {
+                        ui.label(format!("{} / {}", completed, total));
+                    }
                     if !current_file.is_empty() {
                         ui.label(&current_file);
                     }
-                    let fraction = if total > 0 {
+                    let fraction = if total_bytes > 0 {
+                        completed_bytes as f32 / total_bytes as f32
+                    } else if total > 0 {
                         completed as f32 / total as f32
                     } else {
                         0.0
