@@ -41,8 +41,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - フォントサイズは `+`/`-` キーで動的に変更可能（8〜40pt、デフォルト16pt）。`apply_font_size()` で Small/Body/Monospace/Button/Heading を比率で一括設定
 - ウィンドウ位置・サイズは毎フレーム `viewport().outer_rect` / `inner_rect` で追跡し、config保存時に永続化
 - 登録ディレクトリはカスタムショートカットキー付き（デフォルト: ディレクトリ名の先頭文字）
-- WAVプレビューは再生（rodio ストリーミング）と波形読み込み（hound バックグラウンドスレッド）を分離して即時再生
-- WAV再生時は先頭の無音部分を自動スキップ（閾値 0.01）
+- 音声プレビュー（WAV/OGG/AIFF）は再生（rodio ストリーミング）と波形読み込み（バックグラウンドスレッド）を分離して即時再生
+- WAV の波形読み込み・無音検出は hound で高速処理。OGG/AIFF は rodio::Decoder でサンプルをデコードして処理
+- 音声再生時は先頭の無音部分を自動スキップ（閾値 0.01）
 - ファイルリストのカラムは `ui.painter().text()` で直接ピクセル位置に描画（レイアウトシステムをバイパス）
 - WSL ディストリビューションは `wsl.exe --list --quiet`（UTF-16LE）で検出しドライブ一覧に `WSL:distro` として統合（`read_dir` は UNC サーバー名に非対応）
 - UNC パスの識別は `std::path::Prefix::UNC` を使用し、WSL 固有ではなく汎用的に処理

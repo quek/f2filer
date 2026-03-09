@@ -27,13 +27,29 @@ pub struct AudioPreview {
 pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase() == "wav")
+        .map(|e| matches!(e.to_lowercase().as_str(), "wav" | "ogg" | "aif" | "aiff"))
         .unwrap_or(false)
 }
 
-/// Quickly scan the beginning of WAV to find silence duration.
+fn is_wav(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("wav"))
+        .unwrap_or(false)
+}
+
+/// Scan audio file header and detect initial silence duration.
 /// Returns (silence_secs, sample_rate, channels, duration_secs).
 fn scan_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
+    if is_wav(path) {
+        scan_wav_header_and_silence(path)
+    } else {
+        scan_generic_header_and_silence(path)
+    }
+}
+
+/// WAV-specific scan using hound (fast header reading).
+fn scan_wav_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     let reader = hound::WavReader::open(path).ok()?;
     let spec = reader.spec();
     let sample_rate = spec.sample_rate;
@@ -92,6 +108,46 @@ fn scan_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     Some((silence_secs, sample_rate, channels, duration_secs))
 }
 
+/// Generic scan using rodio::Decoder for OGG/AIFF etc.
+fn scan_generic_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
+    let file = std::fs::File::open(path).ok()?;
+    let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
+    let sample_rate = decoder.sample_rate();
+    let channels = decoder.channels();
+
+    // Decode all samples to compute duration and detect silence
+    let max_silence_samples = sample_rate as usize * channels as usize * 5;
+    let mut silent_frames = 0u64;
+    let mut total_samples = 0u64;
+    let mut count = 0usize;
+    let mut frame_max: f32 = 0.0;
+    let mut silence_done = false;
+
+    for sample in decoder {
+        let s = sample as f32 / i16::MAX as f32;
+        total_samples += 1;
+
+        if !silence_done {
+            frame_max = frame_max.max(s.abs());
+            count += 1;
+            if count % channels as usize == 0 {
+                if frame_max > SILENCE_THRESHOLD {
+                    silence_done = true;
+                } else if count < max_silence_samples {
+                    silent_frames += 1;
+                } else {
+                    silence_done = true;
+                }
+                frame_max = 0.0;
+            }
+        }
+    }
+
+    let duration_secs = total_samples as f32 / (sample_rate as f32 * channels as f32);
+    let silence_secs = silent_frames as f32 / sample_rate as f32;
+    Some((silence_secs, sample_rate, channels, duration_secs))
+}
+
 /// Load samples for waveform display in background thread.
 fn load_waveform_background(
     path: PathBuf,
@@ -99,43 +155,80 @@ fn load_waveform_background(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let reader = match hound::WavReader::open(&path) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
-        let spec = reader.spec();
-        let channels = spec.channels as usize;
-
-        let raw_samples: Vec<f32> = match spec.sample_format {
-            hound::SampleFormat::Int => {
-                let bits = spec.bits_per_sample;
-                let max_val = (1u32 << (bits - 1)) as f32;
-                reader
-                    .into_samples::<i32>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| s as f32 / max_val)
-                    .collect()
-            }
-            hound::SampleFormat::Float => reader
-                .into_samples::<f32>()
-                .filter_map(|s| s.ok())
-                .collect(),
-        };
-
-        let mono: Vec<f32> = if channels > 1 {
-            raw_samples
-                .chunks(channels)
-                .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
-                .collect()
+        if is_wav(&path) {
+            load_waveform_wav(&path, &waveform);
         } else {
-            raw_samples
-        };
-
-        if let Ok(mut lock) = waveform.lock() {
-            *lock = mono;
+            load_waveform_generic(&path, &waveform);
         }
         ctx.request_repaint();
     });
+}
+
+/// WAV waveform loading using hound.
+fn load_waveform_wav(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
+    let reader = match hound::WavReader::open(path) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let spec = reader.spec();
+    let channels = spec.channels as usize;
+
+    let raw_samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample;
+            let max_val = (1u32 << (bits - 1)) as f32;
+            reader
+                .into_samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| s as f32 / max_val)
+                .collect()
+        }
+        hound::SampleFormat::Float => reader
+            .into_samples::<f32>()
+            .filter_map(|s| s.ok())
+            .collect(),
+    };
+
+    let mono: Vec<f32> = if channels > 1 {
+        raw_samples
+            .chunks(channels)
+            .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+            .collect()
+    } else {
+        raw_samples
+    };
+
+    if let Ok(mut lock) = waveform.lock() {
+        *lock = mono;
+    }
+}
+
+/// Generic waveform loading using rodio::Decoder for OGG/AIFF etc.
+fn load_waveform_generic(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let decoder = match rodio::Decoder::new(BufReader::new(file)) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let channels = decoder.channels() as usize;
+
+    let raw_samples: Vec<f32> = decoder.map(|s| s as f32 / i16::MAX as f32).collect();
+
+    let mono: Vec<f32> = if channels > 1 {
+        raw_samples
+            .chunks(channels)
+            .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+            .collect()
+    } else {
+        raw_samples
+    };
+
+    if let Ok(mut lock) = waveform.lock() {
+        *lock = mono;
+    }
 }
 
 pub fn load(path: &Path, ctx: &egui::Context) -> Option<AudioPreview> {

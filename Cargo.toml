@@ -13,7 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "ico"] }
 hound = "3"
-rodio = "0.19"
+rodio = { version = "0.20", features = ["symphonia-aiff"] }
 zip = "2"
 tar = "0.4"
 flate2 = "1"

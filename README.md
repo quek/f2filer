@@ -13,7 +13,7 @@ Windows 用の2画面ファイラー。
 - **Vim 風キーバインド** — `j`/`k` でカーソル、`h`/`l` でディレクトリ移動
 - **画像プレビュー** — PNG/JPEG/GIF/BMP/WebP/SVG に対応、GIF アニメーション再生
 - **動画プレビュー** — MP4/AVI/MKV 等を ffmpeg でデコード、音声付きリアルタイム再生
-- **WAV 波形表示＋再生** — 波形をリアルタイム描画、無音スキップ付き自動再生
+- **音声プレビュー** — WAV/OGG/AIFF の波形をリアルタイム描画、無音スキップ付き自動再生
 - **ZIP プレビュー** — 圧縮ファイルの内容一覧を展開なしで表示
 - **登録ディレクトリ** — よく使うディレクトリをブックマーク、カスタムショートカットキーで即ジャンプ
 - **フィルター** — インクリメンタル検索で目的のファイルに素早くアクセス
@@ -63,7 +63,7 @@ Vim 風のキーバインドを採用。アプリ内で `?` キーを押すと�
 - **画像**: [image](https://crates.io/crates/image) 0.25
 - **SVG**: [resvg](https://crates.io/crates/resvg) 0.44
 - **動画/音声デコード**: ffmpeg / ffprobe（外部コマンド）
-- **音声再生**: [rodio](https://crates.io/crates/rodio) 0.19
+- **音声再生**: [rodio](https://crates.io/crates/rodio) 0.20 (WAV/OGG/AIFF)
 - **WAV 解析**: [hound](https://crates.io/crates/hound) 3
 - **ZIP**: [zip](https://crates.io/crates/zip) 2
 - **フォント**: egui 組み込み（カスタムフォント設定可能）
@@ -85,7 +85,7 @@ src/
 ├── undo.rs           # Undo/Redo 履歴管理
 ├── image_viewer.rs   # 画像プレビュー (静止画+GIF+SVG、非同期読込、LRUキャッシュ)
 ├── video_viewer.rs   # 動画プレビュー (ffmpeg デコード、音声同期再生)
-├── audio_viewer.rs   # WAV 波形表示＋再生 (ストリーミング再生、無音スキップ)
+├── audio_viewer.rs   # 音声プレビュー WAV/OGG/AIFF (波形表示、ストリーミング再生、無音スキップ)
 ├── archive_viewer.rs # ZIP 内容一覧プレビュー
 ├── viewer.rs         # テキストビューア
 ├── shell.rs          # 外部コマンド連携 (エディタ、プロパティ、コンテキストメニュー)
