@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-const MAX_PREVIEW_SIZE: u32 = 800;
+const MAX_PREVIEW_SIZE: u32 = 1920;
 const CACHE_CAPACITY: usize = 20;
 
 struct DecodedFrame {
@@ -348,7 +348,7 @@ impl ImagePreview {
                 let available = ui.available_size();
                 let scale_x = available.x / self.image_size[0];
                 let scale_y = available.y / self.image_size[1];
-                let scale = scale_x.min(scale_y).min(1.0);
+                let scale = scale_x.min(scale_y);
 
                 let display_size = egui::vec2(
                     self.image_size[0] * scale,
