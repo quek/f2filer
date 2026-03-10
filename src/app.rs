@@ -514,14 +514,25 @@ impl eframe::App for F2App {
 
                 if !self.status_message.is_empty() {
                     ui.separator();
-                    if self.status_is_error {
-                        ui.label(
-                            egui::RichText::new(&self.status_message)
-                                .color(egui::Color32::from_rgb(255, 80, 80))
-                                .strong(),
-                        );
+                    let reserved_for_time = 200.0;
+                    let max_width = (ui.available_width() - reserved_for_time).max(50.0);
+                    let text = if self.status_is_error {
+                        egui::RichText::new(&self.status_message)
+                            .color(egui::Color32::from_rgb(255, 80, 80))
+                            .strong()
                     } else {
-                        ui.label(&self.status_message);
+                        egui::RichText::new(&self.status_message)
+                    };
+                    let response = ui.add_sized(
+                        [max_width, ui.spacing().interact_size.y],
+                        egui::Label::new(text).truncate().sense(egui::Sense::click()),
+                    );
+                    if response.clicked() {
+                        if let Ok(mut clip) = arboard::Clipboard::new() {
+                            if clip.set_text(&self.status_message).is_ok() {
+                                self.set_status("Copied to clipboard");
+                            }
+                        }
                     }
                 }
 
