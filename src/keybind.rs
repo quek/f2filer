@@ -19,6 +19,7 @@ pub enum Action {
     PageUp,
     PageDown,
     ToggleSelect,
+    ToggleSelectUp,
     ToggleSelectAll,
     HistoryBack,
     HistoryForward,
@@ -83,6 +84,7 @@ pub const ACTION_DISPLAY_ORDER: &[Action] = &[
     Action::HistoryList,
     Action::SwitchPanel,
     Action::ToggleSelect,
+    Action::ToggleSelectUp,
     Action::ToggleSelectAll,
     Action::FocusFilter,
     Action::RecursiveSearch,
@@ -133,6 +135,7 @@ impl Action {
             Action::PageUp => "Page up",
             Action::PageDown => "Page down",
             Action::ToggleSelect => "Toggle select",
+            Action::ToggleSelectUp => "Toggle select (move up)",
             Action::ToggleSelectAll => "Toggle select all / deselect",
             Action::Open => "Open dir / Execute file",
             Action::OpenTextEditor => "Open with text editor",
@@ -386,6 +389,10 @@ impl KeyBindings {
                 kb("space", false, false, false),
                 kb("insert", false, false, false),
             ],
+        );
+        b.insert(
+            Action::ToggleSelectUp,
+            vec![kb("space", false, true, false)],
         );
         b.insert(
             Action::ToggleSelectAll,

@@ -102,6 +102,7 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
         page_up: kb.is_action_pressed(Action::PageUp, i),
         page_down: kb.is_action_pressed(Action::PageDown, i),
         toggle_select: kb.is_action_pressed(Action::ToggleSelect, i),
+        toggle_select_up: kb.is_action_pressed(Action::ToggleSelectUp, i),
         toggle_select_all: kb.is_action_pressed(Action::ToggleSelectAll, i),
         open: kb.is_action_pressed(Action::Open, i),
         open_text_editor: kb.is_action_pressed(Action::OpenTextEditor, i),
@@ -146,14 +147,16 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
     handle_edit_operations(app, &actions);
     handle_misc_keys(app, ctx, &actions);
 
-    // Update preview on cursor move
+    // Update preview on cursor move (including Space select which auto-advances cursor)
     if app.preview_mode
         && (actions.cursor_down
             || actions.cursor_up
             || actions.page_up
             || actions.page_down
             || actions.cursor_to_top
-            || actions.cursor_to_bottom)
+            || actions.cursor_to_bottom
+            || actions.toggle_select
+            || actions.toggle_select_up)
     {
         app.update_preview(ctx);
     }
@@ -168,6 +171,7 @@ struct ActionFlags {
     page_up: bool,
     page_down: bool,
     toggle_select: bool,
+    toggle_select_up: bool,
     toggle_select_all: bool,
     open: bool,
     open_text_editor: bool,
@@ -240,6 +244,10 @@ fn handle_navigation(app: &mut F2App, a: &ActionFlags) {
     if a.toggle_select {
         app.active_panel_mut().toggle_select();
         app.active_panel_mut().move_cursor(1);
+    }
+    if a.toggle_select_up {
+        app.active_panel_mut().toggle_select();
+        app.active_panel_mut().move_cursor(-1);
     }
 
     // Toggle select all / deselect all
