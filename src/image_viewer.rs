@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::thread;
 use std::time::Instant;
 
@@ -105,9 +106,7 @@ impl ImageCache {
 
         thread::spawn(move || {
             let result = decode_image(&path_clone);
-            if let Ok(mut lock) = loading.lock() {
-                *lock = result;
-            }
+            *loading.lock() = result;
             repaint_ctx.request_repaint();
         });
 
@@ -118,8 +117,7 @@ impl ImageCache {
     /// Only returns the preview if the loaded path matches what is currently wanted.
     pub fn poll_loaded(&mut self, ctx: &egui::Context) -> Option<ImagePreview> {
         let decoded = {
-            let mut lock = self.loading.lock().ok()?;
-            lock.take()?
+            self.loading.lock().take()?
         };
 
         let path = decoded.path.clone();

@@ -2,7 +2,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 #[derive(Debug)]
 pub enum FileOpError {
@@ -27,9 +28,19 @@ impl From<std::io::Error> for FileOpError {
     }
 }
 
+/// Copy a file or directory without overwrite (without progress tracking).
+/// Returns `AlreadyExists` if the destination already exists.
+pub fn copy_file_or_dir(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
+    copy_file_or_dir_inner_simple(src, dest_dir, false)
+}
+
 /// Copy a file or directory with overwrite (without progress tracking).
 /// Used by cross-filesystem move fallback and undo/redo.
 pub fn copy_file_or_dir_overwrite(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
+    copy_file_or_dir_inner_simple(src, dest_dir, true)
+}
+
+fn copy_file_or_dir_inner_simple(src: &Path, dest_dir: &Path, overwrite: bool) -> Result<(), FileOpError> {
     let file_name = src
         .file_name()
         .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
@@ -37,6 +48,10 @@ pub fn copy_file_or_dir_overwrite(src: &Path, dest_dir: &Path) -> Result<(), Fil
             "No file name",
         )))?;
     let dest_path = dest_dir.join(file_name);
+
+    if !overwrite && dest_path.exists() {
+        return Err(FileOpError::AlreadyExists(dest_path));
+    }
 
     if src.is_dir() {
         if dest_path.exists() {
@@ -316,27 +331,24 @@ impl ProgressHandle {
     }
 
     fn update(&self, current_file: &str, completed: usize) {
-        if let Ok(mut s) = self.state.lock() {
-            s.current_file = current_file.to_string();
-            s.completed = completed;
-        }
+        let mut s = self.state.lock();
+        s.current_file = current_file.to_string();
+        s.completed = completed;
     }
 
     fn update_bytes(&self, current_file: &str, completed_bytes: u64) {
-        if let Ok(mut s) = self.state.lock() {
-            s.current_file = current_file.to_string();
-            s.completed_bytes = completed_bytes;
-        }
+        let mut s = self.state.lock();
+        s.current_file = current_file.to_string();
+        s.completed_bytes = completed_bytes;
     }
 
     fn set_total_bytes(&self, total_bytes: u64) {
-        if let Ok(mut s) = self.state.lock() {
-            s.total_bytes = total_bytes;
-        }
+        self.state.lock().total_bytes = total_bytes;
     }
 
     fn finish(&self, message: String, succeeded: Vec<PathBuf>, error: Option<String>, result_path: Option<PathBuf>) {
-        if let Ok(mut s) = self.state.lock() {
+        {
+            let mut s = self.state.lock();
             s.finished = true;
             s.cancelled = self.is_cancelled();
             s.result_message = message;
@@ -637,8 +649,12 @@ pub fn compress_to_zip_with_progress(
             break;
         }
 
+        let Some(fname) = src.file_name() else {
+            errors.push(format!("No file name: {}", src.display()));
+            continue;
+        };
         let result = if src.is_dir() {
-            add_dir_to_zip_with_progress(&mut zip, src, src.file_name().unwrap().as_ref(), options, progress, &mut completed_bytes)
+            add_dir_to_zip_with_progress(&mut zip, src, fname.as_ref(), options, progress, &mut completed_bytes)
         } else {
             let src_name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             add_file_to_zip_with_progress(&mut zip, src, &src_name, options, progress, &mut completed_bytes)
@@ -893,19 +909,21 @@ pub fn decompress_tar_with_progress(
         }
 
         count += 1;
-        if let Ok(mut s) = progress.state.lock() {
+        {
+            let mut s = progress.state.lock();
             s.total = count + 1; // tar doesn't know total upfront
             s.completed = count;
         }
     }
 
-    if let Ok(mut s) = progress.state.lock() {
+    {
+        let mut s = progress.state.lock();
         s.total = count;
         s.completed = count;
     }
 
     let msg = if progress.is_cancelled() {
-        let completed = progress.state.lock().map(|s| s.completed).unwrap_or(0);
+        let completed = progress.state.lock().completed;
         format!("Cancelled ({}/{})", completed, count)
     } else if errors.is_empty() {
         format!("Extracted to: {}", extract_dir.display())
@@ -1030,10 +1048,11 @@ pub fn compress_to_zip(
         .large_file(true);
 
     for src in sources {
+        let Some(fname) = src.file_name() else { continue };
         if src.is_dir() {
-            add_dir_to_zip(&mut zip, src, src.file_name().unwrap().as_ref(), options)?;
+            add_dir_to_zip(&mut zip, src, fname.as_ref(), options)?;
         } else {
-            add_file_to_zip(&mut zip, src, src.file_name().unwrap().to_string_lossy().as_ref(), options)?;
+            add_file_to_zip(&mut zip, src, &fname.to_string_lossy(), options)?;
         }
     }
 

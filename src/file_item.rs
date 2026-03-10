@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::SystemTime;
 
 use eframe::egui;
@@ -14,6 +14,8 @@ pub struct FileItem {
     pub is_dir: bool,
     pub is_hidden: bool,
     pub extension: String,
+    pub cached_size: String,
+    pub cached_date: String,
 }
 
 impl FileItem {
@@ -33,6 +35,19 @@ impl FileItem {
 
         let is_hidden = is_hidden_file(path, &name);
 
+        let cached_size = if is_dir {
+            String::new()
+        } else {
+            format_size(size)
+        };
+        let cached_date = match modified {
+            Some(time) => {
+                let datetime: chrono::DateTime<chrono::Local> = time.into();
+                datetime.format("%Y-%m-%d %H:%M").to_string()
+            }
+            None => String::new(),
+        };
+
         Some(FileItem {
             name,
             path: path.to_path_buf(),
@@ -41,6 +56,8 @@ impl FileItem {
             is_dir,
             is_hidden,
             extension,
+            cached_size,
+            cached_date,
         })
     }
 
@@ -52,22 +69,12 @@ impl FileItem {
         }
     }
 
-    pub fn formatted_size(&self) -> String {
-        if self.is_dir {
-            String::new()
-        } else {
-            format_size(self.size)
-        }
+    pub fn formatted_size(&self) -> &str {
+        &self.cached_size
     }
 
-    pub fn formatted_date(&self) -> String {
-        match self.modified {
-            Some(time) => {
-                let datetime: chrono::DateTime<chrono::Local> = time.into();
-                datetime.format("%Y-%m-%d %H:%M").to_string()
-            }
-            None => String::new(),
-        }
+    pub fn formatted_date(&self) -> &str {
+        &self.cached_date
     }
 }
 
@@ -146,6 +153,8 @@ mod tests {
             is_dir: true,
             is_hidden: false,
             extension: String::new(),
+            cached_size: String::new(),
+            cached_date: String::new(),
         }
     }
 
@@ -222,12 +231,12 @@ pub fn read_directory_recursive_streaming(
             batch.push(item);
             total += 1;
             if batch.len() >= RECURSIVE_BATCH_SIZE {
-                sink.lock().unwrap().append(&mut batch);
+                sink.lock().append(&mut batch);
                 repaint.request_repaint();
             }
             if total >= RECURSIVE_SEARCH_LIMIT {
                 if !batch.is_empty() {
-                    sink.lock().unwrap().append(&mut batch);
+                    sink.lock().append(&mut batch);
                 }
                 done.store(true, std::sync::atomic::Ordering::Release);
                 repaint.request_repaint();
@@ -237,7 +246,7 @@ pub fn read_directory_recursive_streaming(
     }
 
     if !batch.is_empty() {
-        sink.lock().unwrap().append(&mut batch);
+        sink.lock().append(&mut batch);
     }
     done.store(true, std::sync::atomic::Ordering::Release);
     repaint.request_repaint();

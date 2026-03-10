@@ -73,7 +73,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 InputAction::Rename(old_path) => {
                     match file_ops::rename_file(&old_path, &value) {
                         Ok(new_path) => {
-                            app.status_message = format!("Renamed to {}", value);
+                            app.set_status(format!("Renamed to {}", value));
                             app.undo_history.push(FileOperation::Rename {
                                 old_path,
                                 new_path,
@@ -81,7 +81,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                             app.active_panel_mut().refresh();
                         }
                         Err(e) => {
-                            app.status_message = format!("Rename error: {}", e);
+                            app.set_status_error(format!("Rename error: {}", e));
                         }
                     }
                 }
@@ -89,12 +89,12 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     let dir = app.active_panel().current_dir.clone();
                     match file_ops::create_directory(&dir, &value) {
                         Ok(path) => {
-                            app.status_message = format!("Created directory: {}", value);
+                            app.set_status(format!("Created directory: {}", value));
                             app.undo_history.push(FileOperation::CreateDir { path });
                             app.active_panel_mut().refresh();
                         }
                         Err(e) => {
-                            app.status_message = format!("Error: {}", e);
+                            app.set_status_error(format!("Error: {}", e));
                         }
                     }
                 }
@@ -114,7 +114,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 InputAction::RegisterDirectoryKey { path, name } => {
                     let key = crate::app::first_char_upper(&value, '?');
                     let path_str = path.to_string_lossy().to_string();
-                    app.status_message = format!("Registered: [{}] {}", key, name);
+                    app.set_status(format!("Registered: [{}] {}", key, name));
                     app.config.registered_dirs.push(crate::config::RegisteredDir {
                         key,
                         name,
@@ -128,8 +128,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                         let name = app.config.registered_dirs[idx].name.clone();
                         app.config.registered_dirs[idx].key = new_key.clone();
                         app.config.save();
-                        app.status_message =
-                            format!("Changed key for \"{}\": [{}]", name, new_key);
+                        app.set_status(format!("Changed key for \"{}\": [{}]", name, new_key));
                     }
                 }
                 InputAction::ZipCompress(sources) => {
@@ -186,16 +185,16 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
             if path.exists() {
                 app.active_panel_mut().navigate_to(path, ctx);
                 app.save_config();
-                app.status_message = format!("Jumped to {}", path_str);
+                app.set_status(format!("Jumped to {}", path_str));
             } else {
-                app.status_message = format!("Directory not found: {}", path_str);
+                app.set_status_error(format!("Directory not found: {}", path_str));
             }
         }
         DialogResult::RegisteredDirDeleted(idx) => {
             if idx < app.config.registered_dirs.len() {
                 let removed = app.config.registered_dirs.remove(idx);
                 app.config.save();
-                app.status_message = format!("Unregistered: {}", removed.name);
+                app.set_status(format!("Unregistered: {}", removed.name));
             }
         }
         DialogResult::RegisteredDirEditKey(idx) => {
@@ -222,7 +221,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
             let overrides = app.config.keybindings_override.get_or_insert_with(std::collections::HashMap::new);
             overrides.insert(action, bindings);
             app.config.save();
-            app.status_message = format!("Updated keybinding: {}", action.description());
+            app.set_status(format!("Updated keybinding: {}", action.description()));
         }
         DialogResult::KeybindingBatchChanged(changes) => {
             // Apply all changes (conflict resolution + target update)
@@ -234,7 +233,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 last_action_desc = action.description().to_string();
             }
             app.config.save();
-            app.status_message = format!("Updated keybinding: {}", last_action_desc);
+            app.set_status(format!("Updated keybinding: {}", last_action_desc));
         }
         DialogResult::KeybindingReset(action) => {
             // Reset to default
@@ -250,7 +249,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 }
             }
             app.config.save();
-            app.status_message = format!("Reset keybinding: {}", action.description());
+            app.set_status(format!("Reset keybinding: {}", action.description()));
         }
         DialogResult::FontSelected(font_path) => {
             app.config.font_path = font_path.clone();
@@ -264,26 +263,25 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                         .map(|s| s.to_string_lossy().to_string())
                 })
                 .unwrap_or_else(|| "(Default)".to_string());
-            app.status_message = format!("Font: {}", name);
+            app.set_status(format!("Font: {}", name));
         }
         DialogResult::ProgressFinished => {
             if let Some(progress_dialog) = app.dialog.progress.take() {
-                let state = progress_dialog.handle.state.lock().ok();
-                let (result_message, succeeded_paths, result_path) = match &state {
-                    Some(s) => (
+                let (result_message, succeeded_paths, result_path, has_error) = {
+                    let s = progress_dialog.handle.state.lock();
+                    (
                         s.result_message.clone(),
                         s.succeeded_paths.clone(),
                         s.result_path.clone(),
-                    ),
-                    None => (
-                        "Operation failed (mutex poisoned)".to_string(),
-                        Vec::new(),
-                        None,
-                    ),
+                        s.error.is_some(),
+                    )
                 };
-                drop(state);
 
-                app.status_message = result_message;
+                if has_error {
+                    app.set_status_error(result_message);
+                } else {
+                    app.set_status(result_message);
+                }
 
                 // For delete/move: remove operated files from recursive search results
                 if matches!(

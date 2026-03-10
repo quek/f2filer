@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 use crate::archive_viewer;
 use eframe::egui;
@@ -15,6 +16,16 @@ use crate::video_viewer::{self, VideoPreview};
 use crate::panel::FilePanel;
 use crate::undo::UndoHistory;
 use crate::viewer::TextPreview;
+
+#[derive(PartialEq)]
+enum PreviewKind {
+    None,
+    Text,
+    Archive,
+    Image,
+    Audio,
+    Video,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ActivePanel {
@@ -37,6 +48,7 @@ pub struct F2App {
     pub(crate) command_line: String,
     pub(crate) command_mode: bool,
     pub(crate) status_message: String,
+    pub(crate) status_is_error: bool,
     pub(crate) drives: Arc<Mutex<Vec<String>>>,
     pub(crate) config: Config,
     window_pos: Option<egui::Pos2>,
@@ -60,7 +72,7 @@ impl F2App {
             let repaint_ctx = cc.egui_ctx.clone();
             std::thread::spawn(move || {
                 let result = file_ops::get_drives();
-                *drives_handle.lock().unwrap() = result;
+                *drives_handle.lock() = result;
                 repaint_ctx.request_repaint();
             });
         }
@@ -112,6 +124,7 @@ impl F2App {
             command_line: String::new(),
             command_mode: false,
             status_message: String::new(),
+            status_is_error: false,
             drives,
             window_pos: None,
             window_size: None,
@@ -121,6 +134,16 @@ impl F2App {
             sort_pending: false,
             keybindings,
         }
+    }
+
+    pub(crate) fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_is_error = false;
+    }
+
+    pub(crate) fn set_status_error(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_is_error = true;
     }
 
     pub(crate) fn active_panel(&self) -> &FilePanel {
@@ -165,16 +188,9 @@ impl F2App {
         };
 
         if audio_viewer::is_audio_file(&entry.path) {
-            // Audio file
-            self.text_preview = None;
-            self.archive_preview = None;
-            self.image_preview = None;
-            self.image_cache.clear_wanted();
-            self.stop_video_preview();
-            // Only reload if different file
+            self.clear_previews_except(PreviewKind::Audio);
             let already_loaded = self.audio_preview.as_ref()
-                .map(|ap| ap.title == entry.name)
-                .unwrap_or(false);
+                .is_some_and(|ap| ap.title == entry.name);
             if !already_loaded {
                 if let Some(ap) = &mut self.audio_preview {
                     ap.stop();
@@ -182,62 +198,27 @@ impl F2App {
                 self.audio_preview = audio_viewer::load(&entry.path, ctx);
             }
         } else if video_viewer::is_video_file(&entry.path) {
-            // Video file
-            self.text_preview = None;
-            self.archive_preview = None;
-            self.image_preview = None;
-            self.image_cache.clear_wanted();
-            if let Some(ap) = &mut self.audio_preview {
-                ap.stop();
-            }
-            self.audio_preview = None;
-            // Only reload if different file
+            self.clear_previews_except(PreviewKind::Video);
             let already_loaded = self.video_preview.as_ref()
-                .map(|vp| vp.title == entry.name)
-                .unwrap_or(false);
+                .is_some_and(|vp| vp.title == entry.name);
             if !already_loaded {
                 self.stop_video_preview();
                 self.video_preview = video_viewer::load(&entry.path, ctx);
             }
         } else if image_viewer::is_image_file(&entry.path) {
-            // Image file
-            self.text_preview = None;
-            self.archive_preview = None;
-            if let Some(ap) = &mut self.audio_preview {
-                ap.stop();
-            }
-            self.audio_preview = None;
-            self.stop_video_preview();
+            self.clear_previews_except(PreviewKind::Image);
             self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
         } else if archive_viewer::is_archive_file(&entry.path) {
-            // Archive file
-            self.text_preview = None;
-            self.image_preview = None;
-            self.image_cache.clear_wanted();
-            if let Some(ap) = &mut self.audio_preview {
-                ap.stop();
-            }
-            self.audio_preview = None;
-            self.stop_video_preview();
+            self.clear_previews_except(PreviewKind::Archive);
             let already_loaded = self.archive_preview.as_ref()
-                .map(|ap| ap.title == entry.name)
-                .unwrap_or(false);
+                .is_some_and(|ap| ap.title == entry.name);
             if !already_loaded {
                 self.archive_preview = archive_viewer::ArchivePreview::load(&entry.path);
             }
         } else {
-            // Text file (fallback)
-            self.image_preview = None;
-            self.image_cache.clear_wanted();
-            self.archive_preview = None;
-            if let Some(ap) = &mut self.audio_preview {
-                ap.stop();
-            }
-            self.audio_preview = None;
-            self.stop_video_preview();
+            self.clear_previews_except(PreviewKind::Text);
             let already_loaded = self.text_preview.as_ref()
-                .map(|tp| tp.title == entry.name)
-                .unwrap_or(false);
+                .is_some_and(|tp| tp.title == entry.name);
             if !already_loaded {
                 self.text_preview = TextPreview::load(&entry.path);
             }
@@ -245,15 +226,29 @@ impl F2App {
     }
 
     pub(crate) fn clear_all_previews(&mut self) {
-        self.text_preview = None;
-        self.archive_preview = None;
-        self.image_preview = None;
-        self.image_cache.clear_wanted();
-        if let Some(ap) = &mut self.audio_preview {
-            ap.stop();
+        self.clear_previews_except(PreviewKind::None);
+    }
+
+    fn clear_previews_except(&mut self, keep: PreviewKind) {
+        if keep != PreviewKind::Text {
+            self.text_preview = None;
         }
-        self.audio_preview = None;
-        self.stop_video_preview();
+        if keep != PreviewKind::Archive {
+            self.archive_preview = None;
+        }
+        if keep != PreviewKind::Image {
+            self.image_preview = None;
+            self.image_cache.clear_wanted();
+        }
+        if keep != PreviewKind::Audio {
+            if let Some(ap) = &mut self.audio_preview {
+                ap.stop();
+            }
+            self.audio_preview = None;
+        }
+        if keep != PreviewKind::Video {
+            self.stop_video_preview();
+        }
     }
 
     fn stop_video_preview(&mut self) {
@@ -519,7 +514,15 @@ impl eframe::App for F2App {
 
                 if !self.status_message.is_empty() {
                     ui.separator();
-                    ui.label(&self.status_message);
+                    if self.status_is_error {
+                        ui.label(
+                            egui::RichText::new(&self.status_message)
+                                .color(egui::Color32::from_rgb(255, 80, 80))
+                                .strong(),
+                        );
+                    } else {
+                        ui.label(&self.status_message);
+                    }
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -668,16 +671,16 @@ impl F2App {
             }
             "refresh" | "r" => {
                 self.active_panel_mut().refresh();
-                self.status_message = "Refreshed".to_string();
+                self.set_status("Refreshed");
             }
             "hidden" => {
                 let show = !self.active_panel().show_hidden;
                 self.active_panel_mut().show_hidden = show;
                 self.active_panel_mut().refresh();
-                self.status_message = format!(
+                self.set_status(format!(
                     "Hidden files: {}",
                     if show { "shown" } else { "hidden" }
-                );
+                ));
             }
             _ if cmd.starts_with("cd ") => {
                 let target = cmd[3..].trim();
@@ -686,11 +689,11 @@ impl F2App {
                     self.active_panel_mut().navigate_to(path, ctx);
                     self.save_config();
                 } else {
-                    self.status_message = format!("Directory not found: {}", target);
+                    self.set_status_error(format!("Directory not found: {}", target));
                 }
             }
             _ => {
-                self.status_message = format!("Unknown command: {}", cmd);
+                self.set_status_error(format!("Unknown command: {}", cmd));
             }
         }
         self.command_line.clear();

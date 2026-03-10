@@ -3,7 +3,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
@@ -254,7 +255,7 @@ fn start_frame_decoder(
                     let _ = child.kill();
                     return;
                 }
-                let len = buffer.lock().map(|b| b.frames.len()).unwrap_or(0);
+                let len = buffer.lock().frames.len();
                 if len < FRAME_BUFFER_CAPACITY {
                     break;
                 }
@@ -267,19 +268,15 @@ fn start_frame_decoder(
                 Ok(()) => {}
                 Err(_) => {
                     // EOF or error
-                    if let Ok(mut buf) = buffer.lock() {
-                        buf.finished = true;
-                    }
+                    buffer.lock().finished = true;
                     break;
                 }
             }
 
-            if let Ok(mut buf) = buffer.lock() {
-                buf.frames.push_back(DecodedFrame {
-                    rgba,
-                    index: frame_idx,
-                });
-            }
+            buffer.lock().frames.push_back(DecodedFrame {
+                rgba,
+                index: frame_idx,
+            });
 
             frame_idx += 1;
             ctx.request_repaint();
@@ -309,8 +306,13 @@ impl Iterator for PcmPipeSource {
 
 impl Source for PcmPipeSource {
     fn current_span_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(self.channels).unwrap() }
-    fn sample_rate(&self) -> std::num::NonZeroU32 { std::num::NonZeroU32::new(self.sample_rate).unwrap() }
+    // SAFETY: channels (2) and sample_rate (44100) are always non-zero (set in start_audio_playback)
+    fn channels(&self) -> std::num::NonZeroU16 {
+        std::num::NonZeroU16::new(self.channels).expect("channels must be non-zero")
+    }
+    fn sample_rate(&self) -> std::num::NonZeroU32 {
+        std::num::NonZeroU32::new(self.sample_rate).expect("sample_rate must be non-zero")
+    }
     fn total_duration(&self) -> Option<Duration> { None }
 }
 
@@ -438,7 +440,8 @@ impl VideoPreview {
         let elapsed = self.start_time.elapsed().as_secs_f64();
         let target_idx = (elapsed * self.fps) as u64;
 
-        if let Ok(mut buf) = self.frame_buffer.lock() {
+        {
+            let mut buf = self.frame_buffer.lock();
             // Drop frames that are behind
             while buf
                 .frames

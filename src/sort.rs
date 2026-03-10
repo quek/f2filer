@@ -106,6 +106,8 @@ mod tests {
             is_dir: false,
             is_hidden: false,
             extension: ext.to_string(),
+            cached_size: String::new(),
+            cached_date: String::new(),
         }
     }
 
@@ -118,6 +120,8 @@ mod tests {
             is_dir: true,
             is_hidden: false,
             extension: String::new(),
+            cached_size: String::new(),
+            cached_date: String::new(),
         }
     }
 

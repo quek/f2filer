@@ -1,23 +1,9 @@
 use eframe::egui;
 
 use crate::config::RegisteredDir;
+use crate::file_item::format_size;
 use crate::file_ops;
 use crate::keybind::{Action, KeyBinding, KeyBindings, ACTION_DISPLAY_ORDER};
-
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * 1024;
-    const GB: u64 = 1024 * 1024 * 1024;
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
 
 #[derive(Default)]
 pub struct DialogState {
@@ -227,517 +213,514 @@ pub enum DialogResult {
 pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResult {
     let mut result = DialogResult::None;
 
-    // Confirm dialog
     if let Some(dialog) = &state.confirm {
-        let title = dialog.title.clone();
-        let message = dialog.message.clone();
-        let mut open = true;
-
-        let screen = ctx.content_rect();
-        egui::Window::new(&title)
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .vscroll(true)
-            .default_pos(screen.center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_width(300.0)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.label(&message);
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Yes (y)").clicked() {
-                        result = DialogResult::ConfirmYes(
-                            state.confirm.as_ref().unwrap().action.clone(),
-                        );
-                    }
-                    if ui.button("No (n)").clicked() {
-                        result = DialogResult::Closed;
-                    }
-                });
-            });
-
-        // Handle keyboard shortcuts for confirm dialog
-        if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Space)) {
-            result = DialogResult::ConfirmYes(state.confirm.as_ref().unwrap().action.clone());
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::N) || i.key_pressed(egui::Key::Escape)) {
-            result = DialogResult::Closed;
-        }
-
-        if !open {
-            result = DialogResult::Closed;
-        }
+        result = show_confirm_dialog(ctx, dialog);
     }
-
-    // Input dialog
     if let Some(dialog) = &mut state.input {
-        let title = dialog.title.clone();
-        let mut open = true;
-
-        egui::Window::new(&title)
-
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                let output = egui::TextEdit::singleline(&mut dialog.value)
-                    .desired_width(300.0)
-                    .show(ui);
-                let response = &output.response;
-
-                // Auto-focus the text input
-                if !response.has_focus() {
-                    response.request_focus();
-                }
-
-                // Apply initial text selection (e.g., filename stem for rename)
-                if let Some(end) = dialog.select_end.take() {
-                    let mut state = output.state;
-                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(0),
-                        egui::text::CCursor::new(end),
-                    )));
-                    state.store(ui.ctx(), response.id);
-                }
-
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked()
-                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
-                        let value = dialog.value.clone();
-                        let action = dialog.action.clone();
-                        result = DialogResult::InputOk(value, action);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        result = DialogResult::Closed;
-                    }
-                });
-            });
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            result = DialogResult::Closed;
-        }
-
-        if !open {
-            result = DialogResult::Closed;
-        }
+        result = show_input_dialog(ctx, dialog);
+    }
+    if let Some(dialog) = &state.message {
+        result = show_message_dialog(ctx, dialog);
+    }
+    if let Some(dialog) = &mut state.drive {
+        result = show_drive_dialog(ctx, dialog);
+    }
+    if let Some(dialog) = &mut state.registered_dir {
+        result = show_registered_dir_dialog(ctx, dialog);
+    }
+    if let Some(dialog) = &mut state.history {
+        result = show_history_dialog(ctx, dialog);
+    }
+    if let Some(progress) = &state.progress {
+        result = show_progress_dialog(ctx, progress);
+    }
+    if let Some(dialog) = &mut state.settings {
+        result = show_settings_main(ctx, dialog);
     }
 
-    // Message dialog
-    if let Some(dialog) = &state.message {
-        let title = dialog.title.clone();
-        let message = dialog.message.clone();
-        let mut open = true;
+    cleanup_dialog_state(state, &result);
 
-        let screen = ctx.content_rect();
-        egui::Window::new(&title)
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .vscroll(true)
-            .default_pos(screen.center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_width(500.0)
-            .default_height(screen.height() * 0.8)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.label(&message);
-                ui.add_space(10.0);
-                if ui.button("OK").clicked() {
+    result
+}
+
+fn show_confirm_dialog(ctx: &egui::Context, dialog: &ConfirmDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let title = dialog.title.clone();
+    let message = dialog.message.clone();
+    let action = dialog.action.clone();
+    let mut open = true;
+
+    let screen = ctx.content_rect();
+    egui::Window::new(&title)
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .vscroll(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_width(300.0)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(&message);
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Yes (y)").clicked() {
+                    result = DialogResult::ConfirmYes(action.clone());
+                }
+                if ui.button("No (n)").clicked() {
                     result = DialogResult::Closed;
                 }
             });
+        });
 
-        if ctx.input(|i| {
-            i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)
-        }) {
-            result = DialogResult::Closed;
-        }
-
-        if !open {
-            result = DialogResult::Closed;
-        }
+    if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Space)) {
+        result = DialogResult::ConfirmYes(action);
     }
+    if ctx.input(|i| i.key_pressed(egui::Key::N) || i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
+    }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
 
-    // Drive dialog
-    if let Some(dialog) = &mut state.drive {
-        let drives = dialog.drives.clone();
-        let mut open = true;
+fn show_input_dialog(ctx: &egui::Context, dialog: &mut InputDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let title = dialog.title.clone();
+    let mut open = true;
 
-        egui::Window::new("Select Drive")
+    egui::Window::new(&title)
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .default_pos(ctx.content_rect().center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            let output = egui::TextEdit::singleline(&mut dialog.value)
+                .desired_width(300.0)
+                .show(ui);
+            let response = &output.response;
 
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                // Assign number keys to non-drive-letter items
-                let mut number_index: u32 = 1;
-                for (i, (name, space)) in drives.iter().enumerate() {
-                    let is_cursor = i == dialog.cursor;
-                    // Non-drive-letter items get a number prefix
-                    let is_drive_letter = name.len() == 2 && name.ends_with(':');
-                    let display_name = if !is_drive_letter && number_index <= 9 {
-                        let label = format!("[{}] {}", number_index, name);
-                        number_index += 1;
-                        label
+            if !response.has_focus() {
+                response.request_focus();
+            }
+
+            if let Some(end) = dialog.select_end.take() {
+                let mut state = output.state;
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(end),
+                )));
+                state.store(ui.ctx(), response.id);
+            }
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("OK").clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                {
+                    let value = dialog.value.clone();
+                    let action = dialog.action.clone();
+                    result = DialogResult::InputOk(value, action);
+                }
+                if ui.button("Cancel").clicked() {
+                    result = DialogResult::Closed;
+                }
+            });
+        });
+
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
+    }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
+
+fn show_message_dialog(ctx: &egui::Context, dialog: &MessageDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let title = dialog.title.clone();
+    let message = dialog.message.clone();
+    let mut open = true;
+
+    let screen = ctx.content_rect();
+    egui::Window::new(&title)
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .vscroll(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_width(500.0)
+        .default_height(screen.height() * 0.8)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(&message);
+            ui.add_space(10.0);
+            if ui.button("OK").clicked() {
+                result = DialogResult::Closed;
+            }
+        });
+
+    if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
+    }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
+
+fn show_drive_dialog(ctx: &egui::Context, dialog: &mut DriveDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let drives = dialog.drives.clone();
+    let mut open = true;
+
+    egui::Window::new("Select Drive")
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .default_pos(ctx.content_rect().center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            let mut number_index: u32 = 1;
+            for (i, (name, space)) in drives.iter().enumerate() {
+                let is_cursor = i == dialog.cursor;
+                let is_drive_letter = name.len() == 2 && name.ends_with(':');
+                let display_name = if !is_drive_letter && number_index <= 9 {
+                    let label = format!("[{}] {}", number_index, name);
+                    number_index += 1;
+                    label
+                } else {
+                    name.clone()
+                };
+                ui.horizontal(|ui| {
+                    let btn_text = if is_cursor {
+                        egui::RichText::new(&display_name).color(egui::Color32::from_rgb(100, 180, 255)).strong()
                     } else {
-                        name.clone()
+                        egui::RichText::new(&display_name)
                     };
-                    ui.horizontal(|ui| {
-                        let btn_text = if is_cursor {
-                            egui::RichText::new(&display_name).color(egui::Color32::from_rgb(100, 180, 255)).strong()
+                    if ui.button(btn_text).clicked() {
+                        result = DialogResult::DriveSelected(name.clone());
+                    }
+                    if !space.is_empty() {
+                        let space_text = if is_cursor {
+                            egui::RichText::new(space).color(egui::Color32::from_rgb(100, 180, 255))
                         } else {
-                            egui::RichText::new(&display_name)
+                            egui::RichText::new(space)
                         };
-                        if ui.button(btn_text).clicked() {
-                            result = DialogResult::DriveSelected(name.clone());
-                        }
-                        if !space.is_empty() {
-                            let space_text = if is_cursor {
-                                egui::RichText::new(space).color(egui::Color32::from_rgb(100, 180, 255))
-                            } else {
-                                egui::RichText::new(space)
-                            };
-                            ui.label(space_text);
-                        }
-                    });
-                }
-            });
+                        ui.label(space_text);
+                    }
+                });
+            }
+        });
 
-        // j/k cursor navigation
-        if !drives.is_empty() {
-            if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
-                dialog.cursor = (dialog.cursor + 1) % drives.len();
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
-                dialog.cursor = (dialog.cursor + drives.len() - 1) % drives.len();
-            }
-            // Space or Enter to select cursor
-            if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
-                if let Some((name, _)) = drives.get(dialog.cursor) {
-                    result = DialogResult::DriveSelected(name.clone());
-                }
+    if !drives.is_empty() {
+        if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+            dialog.cursor = (dialog.cursor + 1) % drives.len();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+            dialog.cursor = (dialog.cursor + drives.len() - 1) % drives.len();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter)) {
+            if let Some((name, _)) = drives.get(dialog.cursor) {
+                result = DialogResult::DriveSelected(name.clone());
             }
         }
+    }
 
-        // Drive letter key shortcuts (e.g. press 'c' for "C:")
-        // Exclude J/K (used for cursor navigation)
-        if let Some(letter) = pressed_letter_key(ctx) {
-            if letter != 'J' && letter != 'K' {
-                let drive_name = format!("{}:", letter);
-                if drives.iter().any(|(n, _)| n == &drive_name) {
-                    result = DialogResult::DriveSelected(drive_name);
-                }
+    if let Some(letter) = pressed_letter_key(ctx) {
+        if letter != 'J' && letter != 'K' {
+            let drive_name = format!("{}:", letter);
+            if drives.iter().any(|(n, _)| n == &drive_name) {
+                result = DialogResult::DriveSelected(drive_name);
             }
         }
+    }
 
-        // Number key shortcuts for non-drive-letter items (1-9)
-        let number_keys = [
-            egui::Key::Num1, egui::Key::Num2, egui::Key::Num3,
-            egui::Key::Num4, egui::Key::Num5, egui::Key::Num6,
-            egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
-        ];
-        for (key_idx, key) in number_keys.iter().enumerate() {
-            if ctx.input(|i| i.key_pressed(*key)) {
-                // Find the (key_idx+1)-th non-drive-letter item
-                let mut count = 0u32;
-                for (name, _) in &drives {
-                    let is_drive_letter = name.len() == 2 && name.ends_with(':');
-                    if !is_drive_letter {
-                        count += 1;
-                        if count == (key_idx as u32 + 1) {
-                            result = DialogResult::DriveSelected(name.clone());
-                            break;
-                        }
+    let number_keys = [
+        egui::Key::Num1, egui::Key::Num2, egui::Key::Num3,
+        egui::Key::Num4, egui::Key::Num5, egui::Key::Num6,
+        egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+    ];
+    for (key_idx, key) in number_keys.iter().enumerate() {
+        if ctx.input(|i| i.key_pressed(*key)) {
+            let mut count = 0u32;
+            for (name, _) in &drives {
+                let is_drive_letter = name.len() == 2 && name.ends_with(':');
+                if !is_drive_letter {
+                    count += 1;
+                    if count == (key_idx as u32 + 1) {
+                        result = DialogResult::DriveSelected(name.clone());
+                        break;
                     }
                 }
             }
         }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            result = DialogResult::Closed;
-        }
-
-        if !open {
-            result = DialogResult::Closed;
-        }
     }
 
-    // Registered directory dialog
-    if let Some(dialog) = &mut state.registered_dir {
-        let mut open = true;
-
-        egui::Window::new("Registered Directories")
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                if dialog.dirs.is_empty() {
-                    ui.label("No registered directories.\nPress Shift+G to register current directory.");
-                } else {
-                    for (i, dir) in dialog.dirs.iter().enumerate() {
-                        let is_cursor = i == dialog.cursor;
-                        ui.horizontal(|ui| {
-                            let label = format!("[{}] {} — {}", dir.key, dir.name, dir.path);
-                            let text = if is_cursor {
-                                egui::RichText::new(&label)
-                                    .color(egui::Color32::from_rgb(100, 180, 255))
-                                    .strong()
-                            } else {
-                                egui::RichText::new(&label)
-                            };
-                            if ui.add(egui::Label::new(text).sense(egui::Sense::click())).clicked() {
-                                result = DialogResult::RegisteredDirSelected(dir.path.clone());
-                            }
-                            if ui.small_button("✎").clicked() {
-                                result = DialogResult::RegisteredDirEditKey(i);
-                            }
-                            if ui.small_button("×").clicked() {
-                                result = DialogResult::RegisteredDirDeleted(i);
-                            }
-                        });
-                    }
-                }
-            });
-
-        // Keyboard shortcuts
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            result = DialogResult::Closed;
-        }
-
-        // Enter to select current cursor
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if let Some(dir) = dialog.dirs.get(dialog.cursor) {
-                result = DialogResult::RegisteredDirSelected(dir.path.clone());
-            }
-        }
-
-        // Shortcut key matching (A-Z letters)
-        if let Some(letter) = pressed_letter_key(ctx) {
-            let letter_str = letter.to_string();
-            if let Some(dir) = dialog.dirs.iter().find(|d| d.key == letter_str) {
-                result = DialogResult::RegisteredDirSelected(dir.path.clone());
-            }
-        }
-
-        if !open {
-            result = DialogResult::Closed;
-        }
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
     }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
 
-    // History dialog
-    if let Some(dialog) = &mut state.history {
-        let mut open = true;
+fn show_registered_dir_dialog(ctx: &egui::Context, dialog: &mut RegisteredDirDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let mut open = true;
 
-        egui::Window::new("History")
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .vscroll(true)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                if dialog.entries.is_empty() {
-                    ui.label("No history.");
-                } else {
-                    for (i, (path, exists)) in dialog.entries.iter().enumerate() {
-                        let is_cursor = i == dialog.cursor;
-                        let label = path.to_string_lossy();
-                        let text = if !exists {
-                            egui::RichText::new(label.as_ref())
-                                .color(egui::Color32::from_rgb(100, 100, 100))
-                                .strikethrough()
-                        } else if is_cursor {
-                            egui::RichText::new(label.as_ref())
+    egui::Window::new("Registered Directories")
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .default_pos(ctx.content_rect().center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            if dialog.dirs.is_empty() {
+                ui.label("No registered directories.\nPress Shift+G to register current directory.");
+            } else {
+                for (i, dir) in dialog.dirs.iter().enumerate() {
+                    let is_cursor = i == dialog.cursor;
+                    ui.horizontal(|ui| {
+                        let label = format!("[{}] {} — {}", dir.key, dir.name, dir.path);
+                        let text = if is_cursor {
+                            egui::RichText::new(&label)
                                 .color(egui::Color32::from_rgb(100, 180, 255))
                                 .strong()
                         } else {
-                            egui::RichText::new(label.as_ref())
+                            egui::RichText::new(&label)
                         };
-                        if ui
-                            .add(egui::Label::new(text).sense(egui::Sense::click()))
-                            .clicked()
-                            && *exists
-                        {
-                            result = DialogResult::HistorySelected(i);
+                        if ui.add(egui::Label::new(text).sense(egui::Sense::click())).clicked() {
+                            result = DialogResult::RegisteredDirSelected(dir.path.clone());
                         }
-                    }
-                }
-            });
-
-        // Keyboard shortcuts
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            result = DialogResult::Closed;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
-            if !dialog.entries.is_empty() {
-                dialog.cursor = (dialog.cursor + 1) % dialog.entries.len();
-            }
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
-            if !dialog.entries.is_empty() {
-                dialog.cursor = (dialog.cursor + dialog.entries.len() - 1) % dialog.entries.len();
-            }
-        }
-        if ctx.input(|i| {
-            i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)
-        }) {
-            if let Some((_, exists)) = dialog.entries.get(dialog.cursor) {
-                if *exists {
-                    result = DialogResult::HistorySelected(dialog.cursor);
+                        if ui.small_button("✎").clicked() {
+                            result = DialogResult::RegisteredDirEditKey(i);
+                        }
+                        if ui.small_button("×").clicked() {
+                            result = DialogResult::RegisteredDirDeleted(i);
+                        }
+                    });
                 }
             }
-        }
+        });
 
-        if !open {
-            result = DialogResult::Closed;
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if let Some(dir) = dialog.dirs.get(dialog.cursor) {
+            result = DialogResult::RegisteredDirSelected(dir.path.clone());
         }
     }
+    if let Some(letter) = pressed_letter_key(ctx) {
+        let letter_str = letter.to_string();
+        if let Some(dir) = dialog.dirs.iter().find(|d| d.key == letter_str) {
+            result = DialogResult::RegisteredDirSelected(dir.path.clone());
+        }
+    }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
 
-    // Progress dialog
-    if let Some(progress) = &state.progress {
-        let (op_label, current_file, completed, total, completed_bytes, total_bytes, finished) = {
-            match progress.handle.state.lock() {
-                Ok(s) => (
-                    s.op_label.clone(),
-                    s.current_file.clone(),
-                    s.completed,
-                    s.total,
-                    s.completed_bytes,
-                    s.total_bytes,
-                    s.finished,
-                ),
-                Err(_) => {
-                    // Mutex poisoned — treat as finished with error
-                    result = DialogResult::ProgressFinished;
-                    ("Error".to_string(), String::new(), 0, 0, 0, 0, true)
+fn show_history_dialog(ctx: &egui::Context, dialog: &mut HistoryDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let mut open = true;
+
+    egui::Window::new("History")
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .vscroll(true)
+        .default_pos(ctx.content_rect().center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            if dialog.entries.is_empty() {
+                ui.label("No history.");
+            } else {
+                for (i, (path, exists)) in dialog.entries.iter().enumerate() {
+                    let is_cursor = i == dialog.cursor;
+                    let label = path.to_string_lossy();
+                    let text = if !exists {
+                        egui::RichText::new(label.as_ref())
+                            .color(egui::Color32::from_rgb(100, 100, 100))
+                            .strikethrough()
+                    } else if is_cursor {
+                        egui::RichText::new(label.as_ref())
+                            .color(egui::Color32::from_rgb(100, 180, 255))
+                            .strong()
+                    } else {
+                        egui::RichText::new(label.as_ref())
+                    };
+                    if ui
+                        .add(egui::Label::new(text).sense(egui::Sense::click()))
+                        .clicked()
+                        && *exists
+                    {
+                        result = DialogResult::HistorySelected(i);
+                    }
                 }
             }
-        };
+        });
 
-        if finished {
-            result = DialogResult::ProgressFinished;
-        } else {
-            egui::Window::new(&op_label)
-                .collapsible(false)
-                .resizable(true)
-                .constrain(true)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.set_min_width(300.0);
-                    if total_bytes > 0 {
-                        ui.label(format!(
-                            "{} / {}",
-                            format_bytes(completed_bytes),
-                            format_bytes(total_bytes),
-                        ));
-                    } else {
-                        ui.label(format!("{} / {}", completed, total));
-                    }
-                    if !current_file.is_empty() {
-                        ui.label(&current_file);
-                    }
-                    let fraction = if total_bytes > 0 {
-                        completed_bytes as f32 / total_bytes as f32
-                    } else if total > 0 {
-                        completed as f32 / total as f32
-                    } else {
-                        0.0
-                    };
-                    ui.add(egui::ProgressBar::new(fraction).show_percentage());
-                    ui.add_space(8.0);
-                    if ui.button("Cancel (Esc)").clicked() {
-                        progress.handle.cancel();
-                    }
-                });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        result = DialogResult::Closed;
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+        if !dialog.entries.is_empty() {
+            dialog.cursor = (dialog.cursor + 1) % dialog.entries.len();
+        }
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+        if !dialog.entries.is_empty() {
+            dialog.cursor = (dialog.cursor + dialog.entries.len() - 1) % dialog.entries.len();
+        }
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)) {
+        if let Some((_, exists)) = dialog.entries.get(dialog.cursor) {
+            if *exists {
+                result = DialogResult::HistorySelected(dialog.cursor);
+            }
+        }
+    }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
 
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+fn show_progress_dialog(ctx: &egui::Context, progress: &ProgressDialog) -> DialogResult {
+    let (op_label, current_file, completed, total, completed_bytes, total_bytes, finished) = {
+        let s = progress.handle.state.lock();
+        (
+            s.op_label.clone(),
+            s.current_file.clone(),
+            s.completed,
+            s.total,
+            s.completed_bytes,
+            s.total_bytes,
+            s.finished,
+        )
+    };
+
+    if finished {
+        return DialogResult::ProgressFinished;
+    }
+
+    egui::Window::new(&op_label)
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .default_pos(ctx.content_rect().center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .show(ctx, |ui| {
+            ui.set_min_width(300.0);
+            if total_bytes > 0 {
+                ui.label(format!(
+                    "{} / {}",
+                    format_size(completed_bytes),
+                    format_size(total_bytes),
+                ));
+            } else {
+                ui.label(format!("{} / {}", completed, total));
+            }
+            if !current_file.is_empty() {
+                ui.label(&current_file);
+            }
+            let fraction = if total_bytes > 0 {
+                completed_bytes as f32 / total_bytes as f32
+            } else if total > 0 {
+                completed as f32 / total as f32
+            } else {
+                0.0
+            };
+            ui.add(egui::ProgressBar::new(fraction).show_percentage());
+            ui.add_space(8.0);
+            if ui.button("Cancel (Esc)").clicked() {
                 progress.handle.cancel();
             }
+        });
 
-            ctx.request_repaint();
-        }
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        progress.handle.cancel();
     }
 
-    // Settings dialog (font selection + keybindings)
-    if let Some(dialog) = &mut state.settings {
-        let mut open = true;
+    ctx.request_repaint();
+    DialogResult::None
+}
 
-        let screen = ctx.content_rect();
-        egui::Window::new("Settings")
-            .collapsible(false)
-            .resizable(true)
-            .constrain(true)
-            .vscroll(true)
-            .default_pos(screen.center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_width(500.0)
-            .default_height(screen.height() * 0.7)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                // Tab buttons
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(dialog.section == SettingsSection::Keybindings, "Keybindings").clicked() {
-                        dialog.section = SettingsSection::Keybindings;
-                    }
-                    if ui.selectable_label(dialog.section == SettingsSection::Font, "Font").clicked() {
-                        dialog.section = SettingsSection::Font;
-                        dialog.filter_has_focus = true;
-                    }
-                });
-                ui.separator();
+fn show_settings_main(ctx: &egui::Context, dialog: &mut SettingsDialog) -> DialogResult {
+    let mut result = DialogResult::None;
+    let mut open = true;
 
-                // Tab key to switch sections (when not editing and filter not focused)
-                if !dialog.kb_editing {
-                    if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
-                        dialog.section = match dialog.section {
-                            SettingsSection::Font => SettingsSection::Keybindings,
-                            SettingsSection::Keybindings => {
-                                dialog.filter_has_focus = true;
-                                SettingsSection::Font
-                            }
-                        };
-                    }
+    let screen = ctx.content_rect();
+    egui::Window::new("Settings")
+        .collapsible(false)
+        .resizable(true)
+        .constrain(true)
+        .vscroll(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_width(500.0)
+        .default_height(screen.height() * 0.7)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.selectable_label(dialog.section == SettingsSection::Keybindings, "Keybindings").clicked() {
+                    dialog.section = SettingsSection::Keybindings;
                 }
-
-                match dialog.section {
-                    SettingsSection::Font => {
-                        show_settings_font_tab(ctx, ui, dialog, &mut result);
-                    }
-                    SettingsSection::Keybindings => {
-                        show_settings_keybindings_tab(ctx, ui, dialog, &mut result);
-                    }
+                if ui.selectable_label(dialog.section == SettingsSection::Font, "Font").clicked() {
+                    dialog.section = SettingsSection::Font;
+                    dialog.filter_has_focus = true;
                 }
             });
+            ui.separator();
 
-        // Escape closes dialog (unless editing or confirming conflict)
-        if !dialog.kb_editing && dialog.kb_conflict.is_none()
-            && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-        {
-            result = DialogResult::Closed;
-        }
+            if !dialog.kb_editing {
+                if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+                    dialog.section = match dialog.section {
+                        SettingsSection::Font => SettingsSection::Keybindings,
+                        SettingsSection::Keybindings => {
+                            dialog.filter_has_focus = true;
+                            SettingsSection::Font
+                        }
+                    };
+                }
+            }
 
-        if !open {
-            result = DialogResult::Closed;
-        }
+            match dialog.section {
+                SettingsSection::Font => {
+                    show_settings_font_tab(ctx, ui, dialog, &mut result);
+                }
+                SettingsSection::Keybindings => {
+                    show_settings_keybindings_tab(ctx, ui, dialog, &mut result);
+                }
+            }
+        });
+
+    if !dialog.kb_editing && dialog.kb_conflict.is_none()
+        && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+    {
+        result = DialogResult::Closed;
     }
+    if !open {
+        result = DialogResult::Closed;
+    }
+    result
+}
 
-    // Clean up closed dialogs
-    match &result {
+fn cleanup_dialog_state(state: &mut DialogState, result: &DialogResult) {
+    match result {
         DialogResult::ConfirmYes(_)
         | DialogResult::Closed
         | DialogResult::DriveSelected(_)
@@ -754,12 +737,11 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
             state.history = None;
         }
         DialogResult::RegisteredDirDeleted(idx) => {
-            // Remove from dialog's local list and adjust cursor
             if let Some(dialog) = &mut state.registered_dir {
                 let idx = *idx;
                 if idx < dialog.dirs.len() {
                     dialog.dirs.remove(idx);
-                    if dialog.cursor >= dialog.dirs.len() && dialog.dirs.len() > 0 {
+                    if dialog.cursor >= dialog.dirs.len() && !dialog.dirs.is_empty() {
                         dialog.cursor = dialog.dirs.len() - 1;
                     }
                 }
@@ -770,16 +752,10 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
         DialogResult::KeybindingChanged(_, _)
         | DialogResult::KeybindingBatchChanged(_)
-        | DialogResult::KeybindingReset(_) => {
-            // Don't close settings dialog — stay on keybindings tab
-        }
-        DialogResult::ProgressFinished => {
-            // Don't clear here — handle_dialog_result takes it via .take()
-        }
+        | DialogResult::KeybindingReset(_) => {}
+        DialogResult::ProgressFinished => {}
         DialogResult::None => {}
     }
-
-    result
 }
 
 fn show_settings_font_tab(
@@ -876,7 +852,7 @@ fn show_settings_keybindings_tab(
 
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
             // Confirmed: remove from conflicts, add to target
-            let conflict = dialog.kb_conflict.take().unwrap();
+            let Some(conflict) = dialog.kb_conflict.take() else { return; };
             let mut batch: Vec<(Action, Vec<KeyBinding>)> = Vec::new();
             for (conflict_idx, _) in &conflict.conflicts {
                 dialog.kb_actions[*conflict_idx].2.retain(|b| b != &conflict.binding);

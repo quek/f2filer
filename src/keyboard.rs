@@ -309,13 +309,12 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
     if a.history_list {
         let stack = &app.active_panel().back_stack;
         if !stack.is_empty() {
+            // Don't call p.exists() here — it blocks the UI thread on network/WSL paths.
+            // Navigation will handle non-existent paths gracefully.
             let entries: Vec<(std::path::PathBuf, bool)> = stack
                 .iter()
                 .rev()
-                .map(|p| {
-                    let exists = p.exists();
-                    (p.clone(), exists)
-                })
+                .map(|p| (p.clone(), true))
                 .collect();
             app.dialog.history = Some(crate::dialog::HistoryDialog {
                 entries,
@@ -347,7 +346,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
         if !targets.is_empty() {
             let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
             crate::shell::copy_files_to_clipboard(&paths, false);
-            app.status_message = format!("Copied {} item(s) to clipboard", paths.len());
+            app.set_status(format!("Copied {} item(s) to clipboard", paths.len()));
         }
     }
 
@@ -432,9 +431,13 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
 
     // Open recycle bin
     if a.open_recycle_bin {
-        let _ = std::process::Command::new("explorer.exe")
+        if std::process::Command::new("explorer.exe")
             .arg("shell:RecycleBinFolder")
-            .spawn();
+            .spawn()
+            .is_err()
+        {
+            app.set_status_error("Failed to open Recycle Bin");
+        }
     }
 
     // File properties
@@ -630,7 +633,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     // Refresh
     if a.refresh {
         app.active_panel_mut().refresh();
-        app.status_message = "Refreshed".to_string();
+        app.set_status("Refreshed");
     }
 
     // Quit
@@ -661,7 +664,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     if a.sync_opposite_panel {
         let dir = app.active_panel().current_dir.clone();
         app.inactive_panel_mut().navigate_to(dir, ctx);
-        app.status_message = "Synced opposite panel".to_string();
+        app.set_status("Synced opposite panel");
         app.save_config();
     }
 
@@ -672,13 +675,13 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
             match arboard::Clipboard::new() {
                 Ok(mut clip) => {
                     if clip.set_text(&path_str).is_ok() {
-                        app.status_message = format!("Copied: {}", path_str);
+                        app.set_status(format!("Copied: {}", path_str));
                     } else {
-                        app.status_message = "Failed to copy to clipboard".to_string();
+                        app.set_status_error("Failed to copy to clipboard");
                     }
                 }
                 Err(_) => {
-                    app.status_message = "Failed to access clipboard".to_string();
+                    app.set_status_error("Failed to access clipboard");
                 }
             }
         }
@@ -717,7 +720,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     // Drive selection
     if a.drive_select {
         use crate::file_ops::{get_drive_space, format_size_human};
-        let drives_list = app.drives.lock().unwrap().clone();
+        let drives_list = app.drives.lock().clone();
         let drives = drives_list.iter().map(|name| {
             let root = if name.contains(':') && !name.starts_with("WSL:") {
                 format!("{}\\", name)
@@ -768,12 +771,12 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     if a.undo {
         match app.undo_history.undo() {
             Ok(msg) => {
-                app.status_message = msg;
+                app.set_status(msg);
                 app.left_panel.refresh();
                 app.right_panel.refresh();
             }
             Err(msg) => {
-                app.status_message = msg;
+                app.set_status_error(msg);
             }
         }
     }
@@ -782,12 +785,12 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     if a.redo {
         match app.undo_history.redo() {
             Ok(msg) => {
-                app.status_message = msg;
+                app.set_status(msg);
                 app.left_panel.refresh();
                 app.right_panel.refresh();
             }
             Err(msg) => {
-                app.status_message = msg;
+                app.set_status_error(msg);
             }
         }
     }
@@ -803,7 +806,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
         app.config.font_size = Some(new_size);
         crate::app::apply_font_size(ctx, app.config.font_size);
         app.config.save();
-        app.status_message = format!("Font size: {}", new_size);
+        app.set_status(format!("Font size: {}", new_size));
     }
 
     // Settings

@@ -1,6 +1,7 @@
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -194,9 +195,7 @@ fn load_waveform_wav(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
         raw_samples
     };
 
-    if let Ok(mut lock) = waveform.lock() {
-        *lock = mono;
-    }
+    *waveform.lock() = mono;
 }
 
 /// Generic waveform loading using rodio::Decoder for OGG/AIFF etc.
@@ -216,9 +215,7 @@ fn load_waveform_generic(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
         raw_samples
     };
 
-    if let Ok(mut lock) = waveform.lock() {
-        *lock = mono;
-    }
+    *waveform.lock() = mono;
 }
 
 pub fn load(path: &Path, ctx: &egui::Context) -> Option<AudioPreview> {
@@ -263,10 +260,8 @@ impl AudioPreview {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         // Check if waveform data arrived from background thread
         if !self.waveform_ready {
-            if let Ok(lock) = self.waveform.lock() {
-                if !lock.is_empty() {
-                    self.waveform_ready = true;
-                }
+            if !self.waveform.lock().is_empty() {
+                self.waveform_ready = true;
             }
         }
 
@@ -345,22 +340,20 @@ impl AudioPreview {
             egui::Stroke::new(0.5, egui::Color32::from_rgb(60, 60, 80)),
         );
 
-        let samples = match self.waveform.lock() {
-            Ok(lock) => {
-                if lock.is_empty() {
-                    // Still loading - show message
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "Loading waveform...",
-                        egui::FontId::monospace(12.0),
-                        egui::Color32::GRAY,
-                    );
-                    return;
-                }
-                lock.clone()
+        let samples = {
+            let lock = self.waveform.lock();
+            if lock.is_empty() {
+                // Still loading - show message
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Loading waveform...",
+                    egui::FontId::monospace(12.0),
+                    egui::Color32::GRAY,
+                );
+                return;
             }
-            Err(_) => return,
+            lock.clone()
         };
 
         let width = rect.width() as usize;

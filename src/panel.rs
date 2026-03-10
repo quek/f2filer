@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::{Instant, SystemTime};
 
 use eframe::egui;
@@ -138,6 +139,7 @@ pub struct FilePanel {
     is_searching: bool,
     search_sink: Arc<Mutex<Vec<FileItem>>>,
     search_done: Arc<AtomicBool>,
+    cached_headers: Option<(SortKey, SortOrder, [String; 4])>,
 }
 
 impl FilePanel {
@@ -175,9 +177,38 @@ impl FilePanel {
             is_searching: false,
             search_sink: Arc::new(Mutex::new(Vec::new())),
             search_done: Arc::new(AtomicBool::new(false)),
+            cached_headers: None,
         };
         panel.refresh();
         panel
+    }
+
+    fn header_labels(&mut self) -> [String; 4] {
+        let needs_update = self.cached_headers.as_ref()
+            .map_or(true, |(k, o, _)| *k != self.sort_key || *o != self.sort_order);
+        if needs_update {
+            let indicator = |key: SortKey| -> &'static str {
+                if self.sort_key == key {
+                    match self.sort_order {
+                        SortOrder::Ascending => " ^",
+                        SortOrder::Descending => " v",
+                    }
+                } else {
+                    ""
+                }
+            };
+            self.cached_headers = Some((
+                self.sort_key,
+                self.sort_order,
+                [
+                    format!("Name{}", indicator(SortKey::Name)),
+                    format!("Ext{}", indicator(SortKey::Extension)),
+                    format!("Size{}", indicator(SortKey::Size)),
+                    format!("Date{}", indicator(SortKey::Date)),
+                ],
+            ));
+        }
+        self.cached_headers.as_ref().unwrap().2.clone()
     }
 
     /// Remove entries whose paths are in the given set (for recursive mode after delete/move).
@@ -304,7 +335,7 @@ impl FilePanel {
             return;
         }
         let mut new_items = {
-            let mut lock = self.search_sink.lock().unwrap();
+            let mut lock = self.search_sink.lock();
             if lock.is_empty() {
                 // Check if search finished
                 if self.is_searching && self.search_done.load(Ordering::Acquire) {
@@ -422,7 +453,7 @@ impl FilePanel {
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
             let entries = read_directory(&dir);
-            *result.lock().unwrap() = Some((generation, entries, None));
+            *result.lock() = Some((generation, entries, None));
             repaint_ctx.request_repaint();
         });
     }
@@ -450,7 +481,7 @@ impl FilePanel {
         std::thread::spawn(move || {
             let dir = resolver();
             let entries = read_directory(&dir);
-            *result.lock().unwrap() = Some((generation, entries, Some(dir)));
+            *result.lock() = Some((generation, entries, Some(dir)));
             repaint_ctx.request_repaint();
         });
     }
@@ -518,7 +549,7 @@ impl FilePanel {
         if !self.is_loading {
             return false;
         }
-        let data = self.loading_result.lock().unwrap().take();
+        let data = self.loading_result.lock().take();
         if let Some((generation, entries, resolved_dir)) = data {
             if generation != self.loading_generation {
                 return false; // stale result from a superseded navigation
@@ -777,18 +808,7 @@ impl FilePanel {
 
         // Column headers — widths shared between headers and rows for alignment
         let mut sort_clicked: Option<SortKey> = None;
-        let cur_sort_key = self.sort_key;
-        let cur_sort_order = self.sort_order;
-        let sort_indicator = |key: SortKey| -> &'static str {
-            if cur_sort_key == key {
-                match cur_sort_order {
-                    SortOrder::Ascending => " ^",
-                    SortOrder::Descending => " v",
-                }
-            } else {
-                ""
-            }
-        };
+        let headers = self.header_labels();
 
         // Column widths: Ext/Size fixed, Date measured from actual text, Name gets the rest
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
@@ -834,15 +854,15 @@ impl FilePanel {
             sort_clicked = Some(SortKey::Date);
         }
 
-        // Render header text at exact data column positions
+        // Render header text at exact data column positions (cached, no per-frame alloc)
         ui.painter().text(egui::pos2(x0, y), egui::Align2::LEFT_CENTER,
-            format!("Name{}", sort_indicator(SortKey::Name)), font_id.clone(), strong_color);
+            &headers[0], font_id.clone(), strong_color);
         ui.painter().text(egui::pos2(ext_x, y), egui::Align2::LEFT_CENTER,
-            format!("Ext{}", sort_indicator(SortKey::Extension)), font_id.clone(), strong_color);
+            &headers[1], font_id.clone(), strong_color);
         ui.painter().text(egui::pos2(size_right_x, y), egui::Align2::RIGHT_CENTER,
-            format!("Size{}", sort_indicator(SortKey::Size)), font_id.clone(), strong_color);
+            &headers[2], font_id.clone(), strong_color);
         ui.painter().text(egui::pos2(date_x, y), egui::Align2::LEFT_CENTER,
-            format!("Date{}", sort_indicator(SortKey::Date)), font_id.clone(), strong_color);
+            &headers[3], font_id.clone(), strong_color);
 
         if let Some(key) = sort_clicked {
             self.set_sort(key);
@@ -1051,6 +1071,8 @@ mod tests {
             is_dir: false,
             is_hidden: false,
             extension: String::new(),
+            cached_size: String::new(),
+            cached_date: String::new(),
         }
     }
 
@@ -1063,6 +1085,8 @@ mod tests {
             is_dir: false,
             is_hidden: true,
             extension: String::new(),
+            cached_size: String::new(),
+            cached_date: String::new(),
         }
     }
 
@@ -1100,6 +1124,9 @@ mod tests {
             is_searching: false,
             search_sink: Arc::new(Mutex::new(Vec::new())),
             search_done: Arc::new(AtomicBool::new(false)),
+            cached_headers: None,
+            back_stack: Vec::new(),
+            forward_stack: Vec::new(),
         };
         panel.rebuild_filter();
         panel

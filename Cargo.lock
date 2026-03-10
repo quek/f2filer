@@ -1267,6 +1267,7 @@ dependencies = [
  "hound",
  "image",
  "open",
+ "parking_lot",
  "resvg",
  "rodio",
  "serde",
