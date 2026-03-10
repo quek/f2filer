@@ -4,8 +4,10 @@ Windows 用の2画面ファイラー。
 
 ## スクリーンショット
 
-![f2filer](docs/screenshot.png)
+![f2filer](docs/screenshot-main.png)
+![画像プレビュー](docs/screenshot-image.png)
 ![動画プレビュー](docs/screenshot-video.png)
+![音声プレビュー](docs/screenshot-audio.png)
 
 ## 特徴
 
