@@ -98,6 +98,29 @@ fn truncate_middle_px(s: &str, max_px: f32, glyph_w: impl Fn(char) -> f32) -> St
     format!("{}…{}", front_str, back_str)
 }
 
+/// Truncate a string at the end with "…" if it exceeds max pixel width.
+/// Returns (truncated_string, was_truncated).
+fn truncate_end_px(s: &str, max_px: f32, glyph_w: impl Fn(char) -> f32) -> (String, bool) {
+    let total: f32 = s.chars().map(|c| glyph_w(c)).sum();
+    if total <= max_px {
+        return (s.to_string(), false);
+    }
+    let ellipsis_w = glyph_w('…');
+    let budget = (max_px - ellipsis_w).max(0.0);
+    let mut result = String::new();
+    let mut w = 0.0f32;
+    for c in s.chars() {
+        let cw = glyph_w(c);
+        if w + cw > budget {
+            break;
+        }
+        result.push(c);
+        w += cw;
+    }
+    result.push('…');
+    (result, true)
+}
+
 /// Truncate a string in the middle with "…" if it exceeds max display width.
 /// Uses terminal-style width (CJK=2, ASCII=1). Used in tests.
 #[cfg(test)]
@@ -140,6 +163,8 @@ pub struct FilePanel {
     search_sink: Arc<Mutex<Vec<FileItem>>>,
     search_done: Arc<AtomicBool>,
     cached_headers: Option<(SortKey, SortOrder, [String; 4])>,
+    /// Full filename (entry.name) when name or ext column is truncated. None if neither is truncated.
+    pub cursor_full_name: Option<String>,
 }
 
 impl FilePanel {
@@ -178,6 +203,7 @@ impl FilePanel {
             search_sink: Arc::new(Mutex::new(Vec::new())),
             search_done: Arc::new(AtomicBool::new(false)),
             cached_headers: None,
+            cursor_full_name: None,
         };
         panel.refresh();
         panel
@@ -899,6 +925,8 @@ impl FilePanel {
         // Set item_spacing.y = 0 BEFORE show_rows so it uses correct row height
         ui.spacing_mut().item_spacing.y = 0.0;
 
+        let mut cursor_full_name: Option<String> = None;
+
         let scroll_output = egui::ScrollArea::vertical()
             .id_salt(panel_id.with("scroll"))
             .auto_shrink([false; 2])
@@ -958,6 +986,7 @@ impl FilePanel {
                     let name_text = truncate_middle_px(&full_name, name_w - col_pad, |c| {
                         ui.fonts_mut(|f| f.glyph_width(&font_id, c))
                     });
+                    let name_truncated = name_text.len() != full_name.len();
 
                     let x0 = row_rect.min.x;
                     let y_center = row_rect.center().y;
@@ -977,10 +1006,16 @@ impl FilePanel {
                     );
 
                     // Ext column (left-aligned, shows <DIR> for directories)
+                    let (ext_text, ext_truncated) = truncate_end_px(entry.formatted_ext(), ext_w - col_pad, |c| {
+                        ui.fonts_mut(|f| f.glyph_width(&font_id, c))
+                    });
+                    if is_cursor && (name_truncated || ext_truncated) {
+                        cursor_full_name = Some(entry.name.clone());
+                    }
                     ui.painter().text(
                         egui::pos2(ext_x, y_center),
                         egui::Align2::LEFT_CENTER,
-                        entry.formatted_ext(),
+                        &ext_text,
                         font_id.clone(),
                         text_color,
                     );
@@ -1037,6 +1072,7 @@ impl FilePanel {
         // Track scroll state for next frame (also captures mouse wheel scrolling)
         self.scroll_offset = scroll_output.state.offset.y;
         self.viewport_h = scroll_output.inner_rect.height();
+        self.cursor_full_name = cursor_full_name;
 
         // Drop highlight overlay
         if self.drop_highlight {

@@ -505,12 +505,16 @@ impl eframe::App for F2App {
                 let selected_count = panel.selected.len();
                 let selected_size = panel.selected_total_size();
 
-                ui.label(format!(
+                let mut left_text = format!(
                     "{} items | {} selected | {}",
                     total_files,
                     selected_count,
                     file_item::format_size(selected_size),
-                ));
+                );
+                if let Some(ref full) = panel.cursor_full_name {
+                    left_text.push_str(&format!(" | {}", full));
+                }
+                ui.label(left_text);
 
                 if !self.status_message.is_empty() {
                     ui.separator();
