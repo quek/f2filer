@@ -13,7 +13,6 @@ use std::os::windows::process::CommandExt;
 use rodio::Source;
 use std::time::Duration;
 
-const MAX_PREVIEW_WIDTH: u32 = 800;
 const FRAME_BUFFER_CAPACITY: usize = 30;
 
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -131,16 +130,19 @@ fn parse_frame_rate(s: &str) -> f64 {
     }
 }
 
-/// Calculate scaled dimensions to fit within MAX_PREVIEW_WIDTH while maintaining aspect ratio.
-/// Height is rounded to even number (required by ffmpeg).
-fn scaled_dimensions(width: u32, height: u32) -> (u32, u32) {
-    if width <= MAX_PREVIEW_WIDTH {
-        // Ensure even height
+/// Calculate scaled dimensions to fit within max_width while maintaining aspect ratio.
+/// Width and height are rounded to even numbers (required by ffmpeg).
+fn scaled_dimensions(width: u32, height: u32, max_width: u32) -> (u32, u32) {
+    if width <= max_width {
         let h = if height % 2 != 0 { height + 1 } else { height };
-        return (width, h);
+        let w = if width % 2 != 0 { width + 1 } else { width };
+        return (w, h);
     }
-    let scale = MAX_PREVIEW_WIDTH as f64 / width as f64;
-    let new_w = MAX_PREVIEW_WIDTH;
+    let scale = max_width as f64 / width as f64;
+    let mut new_w = max_width;
+    if new_w % 2 != 0 {
+        new_w += 1;
+    }
     let mut new_h = (height as f64 * scale) as u32;
     if new_h % 2 != 0 {
         new_h += 1;
@@ -156,7 +158,10 @@ pub fn load(path: &Path, ctx: &egui::Context) -> Option<VideoPreview> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let (scaled_w, scaled_h) = scaled_dimensions(info.width, info.height);
+    // Use half the window width (panel width) as decode target
+    let panel_width = ctx.viewport_rect().width() as u32 / 2;
+    let max_width = panel_width.max(640);
+    let (scaled_w, scaled_h) = scaled_dimensions(info.width, info.height, max_width);
     let frame_size = (scaled_w * scaled_h * 4) as usize;
 
     let frame_buffer = Arc::new(Mutex::new(FrameBuffer {
@@ -373,7 +378,7 @@ impl VideoPreview {
                     let img_h = self.height as f32;
                     let scale_x = available.x / img_w;
                     let scale_y = (available.y - 50.0).max(60.0) / img_h;
-                    let scale = scale_x.min(scale_y).min(1.0);
+                    let scale = scale_x.min(scale_y);
 
                     let display_size = egui::vec2(img_w * scale, img_h * scale);
                     ui.image(egui::load::SizedTexture::new(texture.id(), display_size));
@@ -549,15 +554,22 @@ mod tests {
 
     #[test]
     fn test_scaled_dimensions() {
-        // Under max width - no change (height made even)
-        assert_eq!(scaled_dimensions(640, 480), (640, 480));
-        assert_eq!(scaled_dimensions(640, 481), (640, 482)); // odd height rounded up
+        // Under max width - no change (dimensions made even)
+        assert_eq!(scaled_dimensions(640, 480, 800), (640, 480));
+        assert_eq!(scaled_dimensions(640, 481, 800), (640, 482)); // odd height rounded up
+        assert_eq!(scaled_dimensions(639, 480, 800), (640, 480)); // odd width rounded up
 
         // Over max width - scaled down
-        let (w, h) = scaled_dimensions(1920, 1080);
+        let (w, h) = scaled_dimensions(1920, 1080, 800);
         assert_eq!(w, 800);
         assert!(h % 2 == 0); // even height
         assert!((h as f64 - 450.0).abs() < 2.0); // roughly 1080 * (800/1920)
+
+        // Panel-sized max width
+        let (w, h) = scaled_dimensions(3840, 2160, 960);
+        assert_eq!(w, 960);
+        assert!(h % 2 == 0);
+        assert!((h as f64 - 540.0).abs() < 2.0); // roughly 2160 * (960/3840)
     }
 
     #[test]
