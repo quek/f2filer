@@ -212,6 +212,9 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 });
             }
         }
+        DialogResult::HistorySelected(index) => {
+            app.active_panel_mut().go_back_to(index, ctx);
+        }
         DialogResult::KeybindingChanged(action, bindings) => {
             // Update keybindings in app
             app.keybindings.bindings.insert(action, bindings.clone());

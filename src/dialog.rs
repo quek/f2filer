@@ -28,6 +28,7 @@ pub struct DialogState {
     pub registered_dir: Option<RegisteredDirDialog>,
     pub progress: Option<ProgressDialog>,
     pub settings: Option<SettingsDialog>,
+    pub history: Option<HistoryDialog>,
 }
 
 impl DialogState {
@@ -39,6 +40,7 @@ impl DialogState {
             || self.registered_dir.is_some()
             || self.progress.is_some()
             || self.settings.is_some()
+            || self.history.is_some()
     }
 }
 
@@ -128,6 +130,12 @@ pub struct RegisteredDirDialog {
     pub cursor: usize,
 }
 
+pub struct HistoryDialog {
+    /// Back stack entries in reverse order (most recent first) with existence flag.
+    pub entries: Vec<(std::path::PathBuf, bool)>,
+    pub cursor: usize,
+}
+
 #[derive(Default, PartialEq)]
 pub enum SettingsSection {
     Font,
@@ -211,6 +219,7 @@ pub enum DialogResult {
     KeybindingChanged(Action, Vec<KeyBinding>),
     KeybindingBatchChanged(Vec<(Action, Vec<KeyBinding>)>),
     KeybindingReset(Action),
+    HistorySelected(usize),
     ProgressFinished,
     Closed,
 }
@@ -528,6 +537,76 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         }
     }
 
+    // History dialog
+    if let Some(dialog) = &mut state.history {
+        let mut open = true;
+
+        egui::Window::new("History")
+            .collapsible(false)
+            .resizable(true)
+            .constrain(true)
+            .vscroll(true)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                if dialog.entries.is_empty() {
+                    ui.label("No history.");
+                } else {
+                    for (i, (path, exists)) in dialog.entries.iter().enumerate() {
+                        let is_cursor = i == dialog.cursor;
+                        let label = path.to_string_lossy();
+                        let text = if !exists {
+                            egui::RichText::new(label.as_ref())
+                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                .strikethrough()
+                        } else if is_cursor {
+                            egui::RichText::new(label.as_ref())
+                                .color(egui::Color32::from_rgb(100, 180, 255))
+                                .strong()
+                        } else {
+                            egui::RichText::new(label.as_ref())
+                        };
+                        if ui
+                            .add(egui::Label::new(text).sense(egui::Sense::click()))
+                            .clicked()
+                            && *exists
+                        {
+                            result = DialogResult::HistorySelected(i);
+                        }
+                    }
+                }
+            });
+
+        // Keyboard shortcuts
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            result = DialogResult::Closed;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown)) {
+            if !dialog.entries.is_empty() {
+                dialog.cursor = (dialog.cursor + 1) % dialog.entries.len();
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::K) || i.key_pressed(egui::Key::ArrowUp)) {
+            if !dialog.entries.is_empty() {
+                dialog.cursor = (dialog.cursor + dialog.entries.len() - 1) % dialog.entries.len();
+            }
+        }
+        if ctx.input(|i| {
+            i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)
+        }) {
+            if let Some((_, exists)) = dialog.entries.get(dialog.cursor) {
+                if *exists {
+                    result = DialogResult::HistorySelected(dialog.cursor);
+                }
+            }
+        }
+
+        if !open {
+            result = DialogResult::Closed;
+        }
+    }
+
     // Progress dialog
     if let Some(progress) = &state.progress {
         let (op_label, current_file, completed, total, completed_bytes, total_bytes, finished) = {
@@ -664,13 +743,15 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
         | DialogResult::DriveSelected(_)
         | DialogResult::RegisteredDirSelected(_)
         | DialogResult::RegisteredDirEditKey(_)
-        | DialogResult::FontSelected(_) => {
+        | DialogResult::FontSelected(_)
+        | DialogResult::HistorySelected(_) => {
             state.confirm = None;
             state.input = None;
             state.message = None;
             state.drive = None;
             state.registered_dir = None;
             state.settings = None;
+            state.history = None;
         }
         DialogResult::RegisteredDirDeleted(idx) => {
             // Remove from dialog's local list and adjust cursor

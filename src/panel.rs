@@ -132,6 +132,8 @@ pub struct FilePanel {
     pub(crate) cursor_dirty: HashSet<PathBuf>,
     pub sort_history: HashMap<PathBuf, (SortKey, SortOrder)>,
     pub(crate) sort_dirty: HashSet<PathBuf>,
+    pub back_stack: Vec<PathBuf>,
+    pub forward_stack: Vec<PathBuf>,
     pub recursive_filter: bool,
     is_searching: bool,
     search_sink: Arc<Mutex<Vec<FileItem>>>,
@@ -167,6 +169,8 @@ impl FilePanel {
             cursor_dirty: HashSet::new(),
             sort_history: HashMap::new(),
             sort_dirty: HashSet::new(),
+            back_stack: Vec::new(),
+            forward_stack: Vec::new(),
             recursive_filter: false,
             is_searching: false,
             search_sink: Arc::new(Mutex::new(Vec::new())),
@@ -372,6 +376,24 @@ impl FilePanel {
     }
 
     pub fn navigate_to(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        self.push_history();
+        self.navigate_to_inner(dir, ctx);
+    }
+
+    /// Navigate with a resolver function that runs in a background thread.
+    /// The resolver determines the actual directory path (e.g., drive path resolution
+    /// with exists() checks), avoiding UI thread blocking.
+    pub fn navigate_to_with_resolver(
+        &mut self,
+        placeholder_dir: PathBuf,
+        resolver: impl FnOnce() -> PathBuf + Send + 'static,
+        ctx: &egui::Context,
+    ) {
+        self.push_history();
+        self.navigate_to_with_resolver_inner(placeholder_dir, resolver, ctx);
+    }
+
+    fn navigate_to_inner(&mut self, dir: PathBuf, ctx: &egui::Context) {
         self.save_cursor_position();
         // Only set loading_old_name when going up to parent directory.
         // This positions the cursor on the directory we came from.
@@ -405,10 +427,7 @@ impl FilePanel {
         });
     }
 
-    /// Navigate with a resolver function that runs in a background thread.
-    /// The resolver determines the actual directory path (e.g., drive path resolution
-    /// with exists() checks), avoiding UI thread blocking.
-    pub fn navigate_to_with_resolver(
+    fn navigate_to_with_resolver_inner(
         &mut self,
         placeholder_dir: PathBuf,
         resolver: impl FnOnce() -> PathBuf + Send + 'static,
@@ -434,6 +453,64 @@ impl FilePanel {
             *result.lock().unwrap() = Some((generation, entries, Some(dir)));
             repaint_ctx.request_repaint();
         });
+    }
+
+    const MAX_HISTORY: usize = 100;
+
+    fn push_history(&mut self) {
+        if self.back_stack.last() != Some(&self.current_dir) {
+            self.back_stack.push(self.current_dir.clone());
+            if self.back_stack.len() > Self::MAX_HISTORY {
+                self.back_stack.remove(0);
+            }
+        }
+        self.forward_stack.clear();
+    }
+
+    pub fn go_back(&mut self, ctx: &egui::Context) -> bool {
+        while let Some(dir) = self.back_stack.pop() {
+            if dir.exists() {
+                self.forward_stack.push(self.current_dir.clone());
+                self.navigate_to_inner(dir, ctx);
+                return true;
+            }
+            // Skip deleted directory
+        }
+        false
+    }
+
+    pub fn go_forward(&mut self, ctx: &egui::Context) -> bool {
+        while let Some(dir) = self.forward_stack.pop() {
+            if dir.exists() {
+                self.back_stack.push(self.current_dir.clone());
+                self.navigate_to_inner(dir, ctx);
+                return true;
+            }
+            // Skip deleted directory
+        }
+        false
+    }
+
+    /// Navigate back to a specific index in the history entries list.
+    /// `entries` is the back_stack reversed (most recent first) with existence flags.
+    /// `index` is the position in that reversed list.
+    pub fn go_back_to(&mut self, index: usize, ctx: &egui::Context) -> bool {
+        let stack_idx = self.back_stack.len().checked_sub(1 + index);
+        let Some(stack_idx) = stack_idx else {
+            return false;
+        };
+        if !self.back_stack[stack_idx].exists() {
+            return false;
+        }
+        // Move current dir and all entries above stack_idx to forward_stack
+        self.forward_stack.push(self.current_dir.clone());
+        let moved: Vec<PathBuf> = self.back_stack.drain((stack_idx + 1)..).collect();
+        for dir in moved.into_iter().rev() {
+            self.forward_stack.push(dir);
+        }
+        let dir = self.back_stack.remove(stack_idx);
+        self.navigate_to_inner(dir, ctx);
+        true
     }
 
     /// Poll for async directory loading completion. Returns true if loading just completed.

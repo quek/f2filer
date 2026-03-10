@@ -136,6 +136,9 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
         font_size_down: kb.is_action_pressed(Action::FontSizeDown, i),
         settings: kb.is_action_pressed(Action::Settings, i),
         command_mode: kb.is_action_pressed(Action::CommandMode, i),
+        history_back: kb.is_action_pressed(Action::HistoryBack, i),
+        history_forward: kb.is_action_pressed(Action::HistoryForward, i),
+        history_list: kb.is_action_pressed(Action::HistoryList, i),
     });
 
     handle_navigation(app, &actions);
@@ -199,6 +202,9 @@ struct ActionFlags {
     font_size_down: bool,
     settings: bool,
     command_mode: bool,
+    history_back: bool,
+    history_forward: bool,
+    history_list: bool,
 }
 
 fn handle_navigation(app: &mut F2App, a: &ActionFlags) {
@@ -290,6 +296,31 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
         if let Some(parent) = app.active_panel().current_dir.parent().map(|p| p.to_path_buf()) {
             app.active_panel_mut().navigate_to(parent, ctx);
             app.save_config();
+        }
+    }
+
+    // History back/forward
+    if a.history_back {
+        app.active_panel_mut().go_back(ctx);
+    }
+    if a.history_forward {
+        app.active_panel_mut().go_forward(ctx);
+    }
+    if a.history_list {
+        let stack = &app.active_panel().back_stack;
+        if !stack.is_empty() {
+            let entries: Vec<(std::path::PathBuf, bool)> = stack
+                .iter()
+                .rev()
+                .map(|p| {
+                    let exists = p.exists();
+                    (p.clone(), exists)
+                })
+                .collect();
+            app.dialog.history = Some(crate::dialog::HistoryDialog {
+                entries,
+                cursor: 0,
+            });
         }
     }
 

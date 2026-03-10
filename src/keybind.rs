@@ -20,6 +20,9 @@ pub enum Action {
     PageDown,
     ToggleSelect,
     ToggleSelectAll,
+    HistoryBack,
+    HistoryForward,
+    HistoryList,
     // File operations
     Open,
     OpenTextEditor,
@@ -75,6 +78,9 @@ pub const ACTION_DISPLAY_ORDER: &[Action] = &[
     Action::Open,
     Action::OpenTextEditor,
     Action::ParentDir,
+    Action::HistoryBack,
+    Action::HistoryForward,
+    Action::HistoryList,
     Action::SwitchPanel,
     Action::ToggleSelect,
     Action::ToggleSelectAll,
@@ -131,6 +137,9 @@ impl Action {
             Action::Open => "Open dir / Execute file",
             Action::OpenTextEditor => "Open with text editor",
             Action::ParentDir => "Parent directory",
+            Action::HistoryBack => "History back",
+            Action::HistoryForward => "History forward",
+            Action::HistoryList => "History list",
             Action::Copy => "Copy selected → opposite",
             Action::Move => "Move selected → opposite",
             Action::Delete => "Delete selected (trash)",
@@ -396,6 +405,24 @@ impl KeyBindings {
             vec![kb("e", false, false, false)],
         );
         b.insert(Action::ParentDir, vec![kb("h", false, false, false)]);
+        b.insert(
+            Action::HistoryBack,
+            vec![
+                kb("left", false, false, true),  // Alt+Left
+                kb("h", false, false, true),      // Alt+H
+            ],
+        );
+        b.insert(
+            Action::HistoryForward,
+            vec![
+                kb("right", false, false, true), // Alt+Right
+                kb("l", false, false, true),      // Alt+L
+            ],
+        );
+        b.insert(
+            Action::HistoryList,
+            vec![kb("h", true, false, false)],    // Ctrl+H
+        );
         b.insert(Action::Copy, vec![kb("c", false, false, false)]);
         b.insert(Action::Move, vec![kb("m", false, false, false)]);
         b.insert(Action::Delete, vec![kb("d", false, false, false)]);
