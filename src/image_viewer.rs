@@ -10,6 +10,8 @@ use eframe::egui;
 
 const MAX_PREVIEW_SIZE: u32 = 1920;
 const CACHE_CAPACITY: usize = 20;
+/// Maximum image file size to attempt decoding (200 MB).
+const MAX_IMAGE_FILE_SIZE: u64 = 200 * 1024 * 1024;
 
 struct DecodedFrame {
     width: u32,
@@ -214,6 +216,10 @@ impl ImageCache {
 }
 
 fn decode_image(path: &Path) -> Option<DecodedImage> {
+    // Skip files larger than MAX_IMAGE_FILE_SIZE to avoid excessive memory usage
+    if std::fs::metadata(path).ok()?.len() > MAX_IMAGE_FILE_SIZE {
+        return None;
+    }
     let data = std::fs::read(path).ok()?;
 
     let ext = path

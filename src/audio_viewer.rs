@@ -109,43 +109,38 @@ fn scan_wav_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
 }
 
 /// Generic scan using rodio::Decoder for OGG/AIFF etc.
+/// Only scans first 5 seconds for silence detection (avoids iterating entire file on UI thread).
+/// Duration is computed later from waveform data when background loading completes.
 fn scan_generic_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     let file = std::fs::File::open(path).ok()?;
     let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
     let sample_rate = decoder.sample_rate().get();
     let channels = decoder.channels().get();
 
-    // Decode all samples to compute duration and detect silence
-    let max_silence_samples = sample_rate as usize * channels as usize * 5;
+    // Only scan first 5 seconds to detect initial silence.
+    let max_scan = sample_rate as usize * channels as usize * 5;
     let mut silent_frames = 0u64;
-    let mut total_samples = 0u64;
     let mut count = 0usize;
     let mut frame_max: f32 = 0.0;
-    let mut silence_done = false;
 
     for sample in decoder {
-        let s = sample;
-        total_samples += 1;
-
-        if !silence_done {
-            frame_max = frame_max.max(s.abs());
-            count += 1;
-            if count % channels as usize == 0 {
-                if frame_max > SILENCE_THRESHOLD {
-                    silence_done = true;
-                } else if count < max_silence_samples {
-                    silent_frames += 1;
-                } else {
-                    silence_done = true;
-                }
-                frame_max = 0.0;
+        if count >= max_scan {
+            break;
+        }
+        frame_max = frame_max.max(sample.abs());
+        count += 1;
+        if count % channels as usize == 0 {
+            if frame_max > SILENCE_THRESHOLD {
+                break;
             }
+            silent_frames += 1;
+            frame_max = 0.0;
         }
     }
 
-    let duration_secs = total_samples as f32 / (sample_rate as f32 * channels as f32);
     let silence_secs = silent_frames as f32 / sample_rate as f32;
-    Some((silence_secs, sample_rate, channels, duration_secs))
+    // Duration unknown — will be computed from waveform in background thread
+    Some((silence_secs, sample_rate, channels, 0.0))
 }
 
 /// Load samples for waveform display in background thread.
@@ -260,8 +255,13 @@ impl AudioPreview {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         // Check if waveform data arrived from background thread
         if !self.waveform_ready {
-            if !self.waveform.lock().is_empty() {
+            let len = self.waveform.lock().len();
+            if len > 0 {
                 self.waveform_ready = true;
+                // Compute exact duration from waveform samples (mono, so len = total frames)
+                if self.sample_rate > 0 {
+                    self.duration_secs = len as f32 / self.sample_rate as f32;
+                }
             }
         }
 
@@ -272,10 +272,12 @@ impl AudioPreview {
             } else {
                 String::new()
             };
-            ui.label(format!(
-                "{}Hz / {:.1}s{}",
-                self.sample_rate, self.duration_secs, skip_info
-            ));
+            let dur_str = if self.duration_secs > 0.0 {
+                format!("{:.1}s", self.duration_secs)
+            } else {
+                "---".to_string()
+            };
+            ui.label(format!("{}Hz / {}{}", self.sample_rate, dur_str, skip_info));
             ui.separator();
 
             // Waveform area
