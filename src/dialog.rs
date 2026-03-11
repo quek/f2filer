@@ -91,6 +91,7 @@ pub struct InputDialog {
 pub enum InputAction {
     Rename(std::path::PathBuf),
     NewDirectory,
+    NewFile,
     RegisterDirectory(std::path::PathBuf), // path to register
     RegisterDirectoryKey {
         path: std::path::PathBuf,

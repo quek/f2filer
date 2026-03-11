@@ -261,6 +261,19 @@ pub fn create_directory(parent: &Path, name: &str) -> Result<PathBuf, FileOpErro
     Ok(new_path)
 }
 
+pub fn create_file(parent: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    validate_name(name)?;
+
+    let new_path = parent.join(name);
+
+    if new_path.exists() {
+        return Err(FileOpError::AlreadyExists(new_path));
+    }
+
+    fs::File::create(&new_path)?;
+    Ok(new_path)
+}
+
 /// Reject names containing path separators or traversal components
 fn validate_name(name: &str) -> Result<(), FileOpError> {
     if name.is_empty()

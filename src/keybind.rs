@@ -40,6 +40,7 @@ pub enum Action {
     // Edit
     Rename,
     NewDirectory,
+    NewFile,
     // Misc
     Refresh,
     Quit,
@@ -98,6 +99,7 @@ pub const ACTION_DISPLAY_ORDER: &[Action] = &[
     Action::OpenRecycleBin,
     Action::Rename,
     Action::NewDirectory,
+    Action::NewFile,
     Action::CopyPathClipboard,
     Action::ContextMenu,
     Action::FileProperties,
@@ -154,6 +156,7 @@ impl Action {
             Action::Decompress => "Extract archive at cursor",
             Action::Rename => "Rename",
             Action::NewDirectory => "New directory",
+            Action::NewFile => "New file",
             Action::Refresh => "Refresh",
             Action::Quit => "Quit",
             Action::ToggleHidden => "Toggle hidden files",
@@ -460,6 +463,10 @@ impl KeyBindings {
         b.insert(
             Action::NewDirectory,
             vec![kb("n", false, false, false)],
+        );
+        b.insert(
+            Action::NewFile,
+            vec![kb("n", false, true, false)],
         );
 
         // Misc

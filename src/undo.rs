@@ -27,6 +27,10 @@ pub enum FileOperation {
     CreateDir {
         path: PathBuf,
     },
+    /// File created
+    CreateFile {
+        path: PathBuf,
+    },
     /// Files compressed into a zip
     Compress {
         sources: Vec<PathBuf>,
@@ -65,6 +69,10 @@ impl FileOperation {
             FileOperation::CreateDir { path } => {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 format!("Create dir: {}", name)
+            }
+            FileOperation::CreateFile { path } => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                format!("Create file: {}", name)
             }
             FileOperation::Compress { zip_path, .. } => {
                 let name = zip_path
@@ -189,6 +197,12 @@ fn execute_undo(op: &FileOperation) -> Result<(), String> {
                     .map_err(|e| format!("Undo mkdir failed: {}", e))?;
             }
         }
+        FileOperation::CreateFile { path } => {
+            if path.exists() {
+                file_ops::delete_to_trash(path)
+                    .map_err(|e| format!("Undo create file failed: {}", e))?;
+            }
+        }
         FileOperation::Compress { zip_path, .. } => {
             if zip_path.exists() {
                 file_ops::delete_to_trash(zip_path)
@@ -294,6 +308,16 @@ fn execute_redo(op: &FileOperation) -> Result<(), String> {
                     .to_string_lossy();
                 file_ops::create_directory(parent, &name)
                     .map_err(|e| format!("Redo mkdir failed: {}", e))?;
+            }
+        }
+        FileOperation::CreateFile { path } => {
+            if let Some(parent) = path.parent() {
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| "Invalid path".to_string())?
+                    .to_string_lossy();
+                file_ops::create_file(parent, &name)
+                    .map_err(|e| format!("Redo create file failed: {}", e))?;
             }
         }
         FileOperation::Compress { sources, zip_path } => {

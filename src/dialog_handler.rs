@@ -98,6 +98,19 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                         }
                     }
                 }
+                InputAction::NewFile => {
+                    let dir = app.active_panel().current_dir.clone();
+                    match file_ops::create_file(&dir, &value) {
+                        Ok(path) => {
+                            app.set_status(format!("Created file: {}", value));
+                            app.undo_history.push(FileOperation::CreateFile { path });
+                            app.active_panel_mut().refresh();
+                        }
+                        Err(e) => {
+                            app.set_status_error(format!("Error: {}", e));
+                        }
+                    }
+                }
                 InputAction::RegisterDirectory(path) => {
                     // Step 2: ask for shortcut key (default: first char of name)
                     let default_key = crate::app::first_char_upper(&value, 'A');

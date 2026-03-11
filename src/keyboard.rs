@@ -118,6 +118,7 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
         decompress: kb.is_action_pressed(Action::Decompress, i),
         rename: kb.is_action_pressed(Action::Rename, i),
         new_directory: kb.is_action_pressed(Action::NewDirectory, i),
+        new_file: kb.is_action_pressed(Action::NewFile, i),
         refresh: kb.is_action_pressed(Action::Refresh, i),
         quit: kb.is_action_pressed(Action::Quit, i),
         toggle_hidden: kb.is_action_pressed(Action::ToggleHidden, i),
@@ -187,6 +188,7 @@ struct ActionFlags {
     decompress: bool,
     rename: bool,
     new_directory: bool,
+    new_file: bool,
     refresh: bool,
     quit: bool,
     toggle_hidden: bool,
@@ -632,6 +634,16 @@ fn handle_edit_operations(app: &mut F2App, a: &ActionFlags) {
             title: "New Directory".to_string(),
             value: String::new(),
             action: InputAction::NewDirectory,
+            select_end: None,
+        });
+    }
+
+    // New file
+    if a.new_file {
+        app.dialog.input = Some(InputDialog {
+            title: "New File".to_string(),
+            value: String::new(),
+            action: InputAction::NewFile,
             select_end: None,
         });
     }
