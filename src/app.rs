@@ -177,6 +177,9 @@ impl F2App {
     }
 
     pub(crate) fn update_preview(&mut self, ctx: &egui::Context) {
+        if !self.preview_mode {
+            return;
+        }
         let entry = self.active_panel().current_entry()
             .filter(|e| !e.is_dir)
             .cloned();
@@ -466,11 +469,21 @@ impl eframe::App for F2App {
         let right_loaded = self.right_panel.check_loading_complete();
         if left_loaded || right_loaded {
             self.save_config();
+            self.update_preview(ctx);
         }
 
         // Auto-refresh directories when filesystem changes
-        self.left_panel.check_auto_refresh();
-        self.right_panel.check_auto_refresh();
+        let left_refreshed = self.left_panel.check_auto_refresh();
+        let right_refreshed = self.right_panel.check_auto_refresh();
+        if left_refreshed || right_refreshed {
+            self.update_preview(ctx);
+        }
+
+        // Check deferred preview update requests from panel UI (sort click, filter Enter)
+        if self.active_panel().preview_needs_update {
+            self.active_panel_mut().preview_needs_update = false;
+            self.update_preview(ctx);
+        }
 
         // Poll background image loading
         if self.preview_mode {

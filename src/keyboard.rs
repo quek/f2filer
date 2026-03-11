@@ -149,15 +149,14 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
     handle_misc_keys(app, ctx, &actions);
 
     // Update preview on cursor move (including Space select which auto-advances cursor)
-    if app.preview_mode
-        && (actions.cursor_down
-            || actions.cursor_up
-            || actions.page_up
-            || actions.page_down
-            || actions.cursor_to_top
-            || actions.cursor_to_bottom
-            || actions.toggle_select
-            || actions.toggle_select_up)
+    if actions.cursor_down
+        || actions.cursor_up
+        || actions.page_up
+        || actions.page_down
+        || actions.cursor_to_top
+        || actions.cursor_to_bottom
+        || actions.toggle_select
+        || actions.toggle_select_up
     {
         app.update_preview(ctx);
     }
@@ -725,6 +724,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
         let panel = app.active_panel_mut();
         if panel.recursive_filter {
             panel.exit_recursive_search();
+            app.update_preview(ctx);
         } else {
             panel.recursive_filter = true;
             panel.focus_filter = true;
@@ -735,6 +735,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     // Exit recursive search mode (when filter doesn't have focus)
     if a.exit_recursive_search && app.active_panel().recursive_filter {
         app.active_panel_mut().exit_recursive_search();
+        app.update_preview(ctx);
     }
 
     // Drive selection
@@ -794,6 +795,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
                 app.set_status(msg);
                 app.left_panel.refresh();
                 app.right_panel.refresh();
+                app.update_preview(ctx);
             }
             Err(msg) => {
                 app.set_status_error(msg);
@@ -808,6 +810,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
                 app.set_status(msg);
                 app.left_panel.refresh();
                 app.right_panel.refresh();
+                app.update_preview(ctx);
             }
             Err(msg) => {
                 app.set_status_error(msg);

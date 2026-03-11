@@ -365,9 +365,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 app.left_panel.refresh();
                 app.right_panel.refresh();
                 app.active_panel_mut().deselect_all();
-                if app.preview_mode {
-                    app.update_preview(ctx);
-                }
+                app.update_preview(ctx);
             }
         }
         _ => {}

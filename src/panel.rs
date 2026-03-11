@@ -165,6 +165,8 @@ pub struct FilePanel {
     cached_headers: Option<(SortKey, SortOrder, [String; 4])>,
     /// Full filename (entry.name) when name or ext column is truncated. None if neither is truncated.
     pub cursor_full_name: Option<String>,
+    /// Set by UI events (sort click, filter Enter) that need preview update but lack ctx.
+    pub preview_needs_update: bool,
 }
 
 impl FilePanel {
@@ -204,6 +206,7 @@ impl FilePanel {
             search_done: Arc::new(AtomicBool::new(false)),
             cached_headers: None,
             cursor_full_name: None,
+            preview_needs_update: false,
         };
         panel.refresh();
         panel
@@ -631,12 +634,13 @@ impl FilePanel {
 
     /// Check if the directory has changed and auto-refresh if needed.
     /// Preserves cursor position and selection by filename.
-    pub fn check_auto_refresh(&mut self) {
+    /// Returns true if a refresh was performed.
+    pub fn check_auto_refresh(&mut self) -> bool {
         if self.is_loading || self.recursive_filter {
-            return;
+            return false;
         }
         if self.last_dir_check.elapsed() < std::time::Duration::from_secs(2) {
-            return;
+            return false;
         }
         self.last_dir_check = Instant::now();
 
@@ -644,7 +648,7 @@ impl FilePanel {
             .and_then(|m| m.modified())
             .ok();
         if current_mtime == self.last_dir_modified {
-            return;
+            return false;
         }
         self.last_dir_modified = current_mtime;
 
@@ -675,13 +679,14 @@ impl FilePanel {
             for (i, &idx) in self.filtered_indices.iter().enumerate() {
                 if self.entries[idx].name == name {
                     self.cursor = i;
-                    return;
+                    return true;
                 }
             }
         }
         if self.cursor >= self.visible_count() {
             self.cursor = self.visible_count().saturating_sub(1);
         }
+        true
     }
 
     pub fn move_cursor(&mut self, delta: i32) {
@@ -819,6 +824,7 @@ impl FilePanel {
                 self.filter_has_focus = false;
                 if !self.filter.is_empty() && !self.filtered_indices.is_empty() {
                     self.cursor = 0;
+                    self.preview_needs_update = true;
                 }
             }
             if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -892,6 +898,7 @@ impl FilePanel {
 
         if let Some(key) = sort_clicked {
             self.set_sort(key);
+            self.preview_needs_update = true;
         }
 
         ui.separator();
