@@ -45,6 +45,7 @@ pub struct F2App {
     pub(crate) audio_preview: Option<AudioPreview>,
     pub(crate) video_preview: Option<VideoPreview>,
     pub(crate) preview_mode: bool,
+    preview_mtime: Option<std::time::SystemTime>,
     pub(crate) command_line: String,
     pub(crate) command_mode: bool,
     pub(crate) status_message: String,
@@ -121,6 +122,7 @@ impl F2App {
             audio_preview: None,
             video_preview: None,
             preview_mode: false,
+            preview_mtime: None,
             command_line: String::new(),
             command_mode: false,
             status_message: String::new(),
@@ -187,40 +189,47 @@ impl F2App {
             }
         };
 
+        let mtime_changed = self.preview_mtime != entry.modified;
+
         if audio_viewer::is_audio_file(&entry.path) {
             self.clear_previews_except(PreviewKind::Audio);
             let already_loaded = self.audio_preview.as_ref()
                 .is_some_and(|ap| ap.title == entry.name);
-            if !already_loaded {
+            if !already_loaded || mtime_changed {
                 if let Some(ap) = &mut self.audio_preview {
                     ap.stop();
                 }
                 self.audio_preview = audio_viewer::load(&entry.path, ctx);
+                self.preview_mtime = entry.modified;
             }
         } else if video_viewer::is_video_file(&entry.path) {
             self.clear_previews_except(PreviewKind::Video);
             let already_loaded = self.video_preview.as_ref()
                 .is_some_and(|vp| vp.title == entry.name);
-            if !already_loaded {
+            if !already_loaded || mtime_changed {
                 self.stop_video_preview();
                 self.video_preview = video_viewer::load(&entry.path, ctx);
+                self.preview_mtime = entry.modified;
             }
         } else if image_viewer::is_image_file(&entry.path) {
             self.clear_previews_except(PreviewKind::Image);
-            self.image_preview = self.image_cache.get_or_load(ctx, &entry.path);
+            self.image_preview = self.image_cache.get_or_load(ctx, &entry.path, entry.modified);
+            self.preview_mtime = entry.modified;
         } else if archive_viewer::is_archive_file(&entry.path) {
             self.clear_previews_except(PreviewKind::Archive);
             let already_loaded = self.archive_preview.as_ref()
                 .is_some_and(|ap| ap.title == entry.name);
-            if !already_loaded {
+            if !already_loaded || mtime_changed {
                 self.archive_preview = archive_viewer::ArchivePreview::load(&entry.path);
+                self.preview_mtime = entry.modified;
             }
         } else {
             self.clear_previews_except(PreviewKind::Text);
             let already_loaded = self.text_preview.as_ref()
                 .is_some_and(|tp| tp.title == entry.name);
-            if !already_loaded {
+            if !already_loaded || mtime_changed {
                 self.text_preview = TextPreview::load(&entry.path);
+                self.preview_mtime = entry.modified;
             }
         }
     }

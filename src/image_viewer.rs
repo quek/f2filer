@@ -42,12 +42,14 @@ pub struct ImageCache {
     loading: Arc<Mutex<Option<DecodedImage>>>,
     loading_path: Option<PathBuf>,
     wanted_path: Option<PathBuf>,
+    wanted_mtime: Option<std::time::SystemTime>,
 }
 
 struct CacheEntry {
     frames: Vec<AnimFrame>,
     image_size: [f32; 2],
     total_duration_ms: u32,
+    mtime: Option<std::time::SystemTime>,
 }
 
 impl ImageCache {
@@ -58,6 +60,7 @@ impl ImageCache {
             loading: Arc::new(Mutex::new(None)),
             loading_path: None,
             wanted_path: None,
+            wanted_mtime: None,
         }
     }
 
@@ -66,9 +69,18 @@ impl ImageCache {
     }
 
     /// Request an image. Returns immediately from cache, or starts background load.
-    pub fn get_or_load(&mut self, ctx: &egui::Context, path: &Path) -> Option<ImagePreview> {
+    pub fn get_or_load(&mut self, ctx: &egui::Context, path: &Path, mtime: Option<std::time::SystemTime>) -> Option<ImagePreview> {
         let key = path.to_path_buf();
         self.wanted_path = Some(key.clone());
+        self.wanted_mtime = mtime;
+
+        // Invalidate cache entry if mtime changed
+        if let Some(entry) = self.entries.get(&key) {
+            if entry.mtime != mtime {
+                self.entries.remove(&key);
+                self.order.retain(|p| p != &key);
+            }
+        }
 
         // Cache hit
         if let Some(entry) = self.entries.get(&key) {
@@ -180,6 +192,7 @@ impl ImageCache {
                 frames: cache_frames,
                 image_size,
                 total_duration_ms,
+                mtime: self.wanted_mtime,
             },
         );
         self.order.push(path.clone());
