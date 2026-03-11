@@ -64,6 +64,15 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     },
                 );
             }
+            ConfirmAction::StreamDecompressOverwrite { path, dest_dir } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::StreamDecompress {
+                        path,
+                        dest_dir,
+                    },
+                );
+            }
         },
         DialogResult::InputOk(value, action) => {
             if value.is_empty() {
@@ -356,6 +365,14 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                                 app.undo_history.push(FileOperation::Decompress {
                                     zip_path: tar_path.clone(),
                                     extracted_dir,
+                                });
+                            }
+                        }
+                        OpKind::StreamDecompress { path, .. } => {
+                            if let Some(output_file) = result_path {
+                                app.undo_history.push(FileOperation::Decompress {
+                                    zip_path: path.clone(),
+                                    extracted_dir: output_file,
                                 });
                             }
                         }

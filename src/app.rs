@@ -334,6 +334,7 @@ impl F2App {
             OpKind::ZipCompress { sources, .. } => sources.len(),
             OpKind::ZipDecompress { .. } => 1,
             OpKind::TarDecompress { .. } => 1,
+            OpKind::StreamDecompress { .. } => 1,
         };
 
         let label = match &op_kind {
@@ -344,6 +345,7 @@ impl F2App {
             OpKind::ZipCompress { .. } => "Compressing",
             OpKind::ZipDecompress { .. } => "Decompressing",
             OpKind::TarDecompress { .. } => "Decompressing",
+            OpKind::StreamDecompress { .. } => "Decompressing",
         };
 
         let progress = file_ops::ProgressHandle::new(label, total);
@@ -373,6 +375,9 @@ impl F2App {
                 }
                 OpKind::TarDecompress { tar_path, dest_dir } => {
                     file_ops::decompress_tar_with_progress(&tar_path, &dest_dir, &handle_clone);
+                }
+                OpKind::StreamDecompress { path, dest_dir } => {
+                    file_ops::decompress_stream_with_progress(&path, &dest_dir, &handle_clone);
                 }
             }
             repaint_ctx.request_repaint();

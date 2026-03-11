@@ -39,6 +39,7 @@ pub enum OpKind {
     ZipCompress { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, zip_name: String },
     ZipDecompress { zip_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
     TarDecompress { tar_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
+    StreamDecompress { path: std::path::PathBuf, dest_dir: std::path::PathBuf },
 }
 
 pub struct ProgressDialog {
@@ -75,6 +76,10 @@ pub enum ConfirmAction {
     },
     TarDecompressOverwrite {
         tar_path: std::path::PathBuf,
+        dest_dir: std::path::PathBuf,
+    },
+    StreamDecompressOverwrite {
+        path: std::path::PathBuf,
         dest_dir: std::path::PathBuf,
     },
 }

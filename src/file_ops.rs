@@ -828,16 +828,17 @@ pub fn decompress_tar_with_progress(
     dest_dir: &Path,
     progress: &ProgressHandle,
 ) {
-    // Determine archive stem: strip .tar.gz / .tgz / .tar
+    // Determine archive stem: strip .tar.gz / .tar.xz / .tgz / .txz / .tar
     let file_name = tar_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    let stem = if file_name.to_lowercase().ends_with(".tar.gz") {
+    let lower = file_name.to_lowercase();
+    let stem = if lower.ends_with(".tar.gz") {
         &file_name[..file_name.len() - 7]
-    } else if file_name.to_lowercase().ends_with(".tgz") {
-        &file_name[..file_name.len() - 4]
-    } else if file_name.to_lowercase().ends_with(".tar") {
+    } else if lower.ends_with(".tar.xz") {
+        &file_name[..file_name.len() - 7]
+    } else if lower.ends_with(".tgz") || lower.ends_with(".txz") || lower.ends_with(".tar") {
         &file_name[..file_name.len() - 4]
     } else {
         file_name
@@ -862,14 +863,15 @@ pub fn decompress_tar_with_progress(
         }
     };
 
-    // Detect if gzip-compressed by extension
-    let is_gzip = {
-        let lower = file_name.to_lowercase();
-        lower.ends_with(".tar.gz") || lower.ends_with(".tgz")
-    };
+    // Detect compression by extension
+    let is_gzip = lower.ends_with(".tar.gz") || lower.ends_with(".tgz");
+    let is_xz = lower.ends_with(".tar.xz") || lower.ends_with(".txz");
 
     let mut archive = if is_gzip {
         let decoder = flate2::read::GzDecoder::new(file);
+        tar::Archive::new(Box::new(decoder) as Box<dyn Read + Send>)
+    } else if is_xz {
+        let decoder = xz2::read::XzDecoder::new(file);
         tar::Archive::new(Box::new(decoder) as Box<dyn Read + Send>)
     } else {
         tar::Archive::new(Box::new(file) as Box<dyn Read + Send>)
@@ -944,6 +946,108 @@ pub fn decompress_tar_with_progress(
         format!("Errors: {}", errors.join(", "))
     };
     progress.finish(msg, vec![tar_path.to_path_buf()], errors.first().cloned(), Some(extract_dir));
+}
+
+/// Decompress a single compressed file (gz/xz) to produce the inner file (e.g. .tar).
+/// Only strips the outer compression layer; does NOT extract tar contents.
+pub fn decompress_stream_with_progress(
+    path: &Path,
+    dest_dir: &Path,
+    progress: &ProgressHandle,
+) {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let lower = file_name.to_lowercase();
+
+    // Determine output filename
+    let output_name = if lower.ends_with(".tar.gz") {
+        format!("{}.tar", &file_name[..file_name.len() - 3])
+    } else if lower.ends_with(".tar.xz") {
+        format!("{}.tar", &file_name[..file_name.len() - 3])
+    } else if lower.ends_with(".tgz") {
+        format!("{}.tar", &file_name[..file_name.len() - 4])
+    } else if lower.ends_with(".txz") {
+        format!("{}.tar", &file_name[..file_name.len() - 4])
+    } else {
+        progress.finish("Error: unsupported format".to_string(), Vec::new(), Some("Unsupported format".to_string()), None);
+        return;
+    };
+
+    let output_path = dest_dir.join(&output_name);
+    let is_gzip = lower.ends_with(".tar.gz") || lower.ends_with(".tgz");
+
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+
+    let file_size = file.metadata().ok().map(|m| m.len()).unwrap_or(0);
+    {
+        let mut s = progress.state.lock();
+        s.total = if file_size > 0 { (file_size / 8192) as usize } else { 0 };
+    }
+
+    let mut reader: Box<dyn Read> = if is_gzip {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(xz2::read::XzDecoder::new(file))
+    };
+
+    let mut out = match fs::File::create(&output_path) {
+        Ok(f) => std::io::BufWriter::new(f),
+        Err(e) => {
+            progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+            return;
+        }
+    };
+
+    let mut buf = [0u8; 8192];
+    let mut blocks: usize = 0;
+
+    loop {
+        if progress.is_cancelled() {
+            break;
+        }
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(e) = out.write_all(&buf[..n]) {
+                    // Clean up partial file on error
+                    drop(out);
+                    let _ = fs::remove_file(&output_path);
+                    progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+                    return;
+                }
+                blocks += 1;
+                progress.update(&output_name, blocks);
+                {
+                    let mut s = progress.state.lock();
+                    s.completed = blocks;
+                }
+            }
+            Err(e) => {
+                drop(out);
+                let _ = fs::remove_file(&output_path);
+                progress.finish(format!("Error: {}", e), Vec::new(), Some(e.to_string()), None);
+                return;
+            }
+        }
+    }
+
+    if progress.is_cancelled() {
+        drop(out);
+        let _ = fs::remove_file(&output_path);
+        progress.finish("Cancelled".to_string(), Vec::new(), None, None);
+        return;
+    }
+
+    let msg = format!("Decompressed: {}", output_name);
+    progress.finish(msg, vec![path.to_path_buf()], None, Some(output_path));
 }
 
 #[cfg(windows)]

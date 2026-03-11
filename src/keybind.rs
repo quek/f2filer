@@ -37,6 +37,7 @@ pub enum Action {
     ContextMenu,
     ZipCompress,
     Decompress,
+    DecompressDirect,
     // Edit
     Rename,
     NewDirectory,
@@ -108,6 +109,7 @@ pub const ACTION_DISPLAY_ORDER: &[Action] = &[
     Action::RegisterDir,
     Action::ZipCompress,
     Action::Decompress,
+    Action::DecompressDirect,
     Action::Undo,
     Action::Redo,
     Action::TogglePreview,
@@ -154,6 +156,7 @@ impl Action {
             Action::ContextMenu => "Context menu",
             Action::ZipCompress => "Zip compress selected",
             Action::Decompress => "Extract archive at cursor",
+            Action::DecompressDirect => "Extract archive directly",
             Action::Rename => "Rename",
             Action::NewDirectory => "New directory",
             Action::NewFile => "New file",
@@ -457,6 +460,7 @@ impl KeyBindings {
             vec![kb("u", false, true, false)], // Shift+U
         );
         b.insert(Action::Decompress, vec![kb("u", false, false, false)]);
+        b.insert(Action::DecompressDirect, vec![kb("u", false, false, true)]); // Alt+U
 
         // Edit
         b.insert(Action::Rename, vec![kb("r", false, false, false)]);

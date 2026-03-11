@@ -25,7 +25,9 @@ impl ArchivePreview {
             .and_then(|n| n.to_str())
             .map(|n| n.to_lowercase())
             .unwrap_or_default();
-        let content = if name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tgz") || name_lower.ends_with(".tar") {
+        let content = if name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tgz")
+            || name_lower.ends_with(".tar.xz") || name_lower.ends_with(".txz")
+            || name_lower.ends_with(".tar") {
             list_tar_contents(path)?
         } else {
             list_zip_contents(path)?
@@ -55,16 +57,16 @@ pub fn is_archive_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
-    if matches!(ext_lower.as_str(), "zip" | "tgz" | "tar") {
+    if matches!(ext_lower.as_str(), "zip" | "tgz" | "txz" | "tar") {
         return true;
     }
-    // Check for .tar.gz (double extension)
+    // Check for double extensions (.tar.gz, .tar.xz)
     let name_lower = path
         .file_name()
         .and_then(|n| n.to_str())
         .map(|n| n.to_lowercase())
         .unwrap_or_default();
-    name_lower.ends_with(".tar.gz")
+    name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tar.xz")
 }
 
 fn list_zip_contents(path: &Path) -> Option<String> {
@@ -134,9 +136,13 @@ fn list_tar_contents(path: &Path) -> Option<String> {
         .map(|n| n.to_lowercase())
         .unwrap_or_default();
     let is_gzip = name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tgz");
+    let is_xz = name_lower.ends_with(".tar.xz") || name_lower.ends_with(".txz");
 
     let mut archive = if is_gzip {
         let decoder = flate2::read::GzDecoder::new(file);
+        tar::Archive::new(Box::new(decoder) as Box<dyn Read>)
+    } else if is_xz {
+        let decoder = xz2::read::XzDecoder::new(file);
         tar::Archive::new(Box::new(decoder) as Box<dyn Read>)
     } else {
         tar::Archive::new(Box::new(file) as Box<dyn Read>)

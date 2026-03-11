@@ -116,6 +116,7 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
         context_menu: kb.is_action_pressed(Action::ContextMenu, i),
         zip_compress: kb.is_action_pressed(Action::ZipCompress, i),
         decompress: kb.is_action_pressed(Action::Decompress, i),
+        decompress_direct: kb.is_action_pressed(Action::DecompressDirect, i),
         rename: kb.is_action_pressed(Action::Rename, i),
         new_directory: kb.is_action_pressed(Action::NewDirectory, i),
         new_file: kb.is_action_pressed(Action::NewFile, i),
@@ -185,6 +186,7 @@ struct ActionFlags {
     context_menu: bool,
     zip_compress: bool,
     decompress: bool,
+    decompress_direct: bool,
     rename: bool,
     new_directory: bool,
     new_file: bool,
@@ -487,8 +489,11 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
         }
     }
 
-    // Decompress archive at cursor (zip/tar.gz/tgz/tar)
-    if a.decompress {
+    // Decompress archive at cursor
+    // u: .tar.gz/.tgz/.tar.xz/.txz → stream decompress (outer layer only → .tar)
+    //    .zip/.tar → full extract
+    // Alt+u: always full extract (tar+compression in one step)
+    if a.decompress || a.decompress_direct {
         if let Some(entry) = app.active_panel().current_entry() {
             if !entry.is_dir {
                 let name_lower = entry.name.to_lowercase();
@@ -499,6 +504,11 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                     .map(|e| e.to_lowercase())
                     .unwrap_or_default();
                 let dest = app.inactive_panel().current_dir.clone();
+                let is_compressed_tar = name_lower.ends_with(".tar.gz")
+                    || name_lower.ends_with(".tar.xz")
+                    || ext_lower == "tgz"
+                    || ext_lower == "txz";
+
                 if ext_lower == "zip" {
                     let extract_name = entry.path.file_stem()
                         .map(|s| s.to_string_lossy().to_string())
@@ -525,9 +535,34 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                             },
                         );
                     }
-                } else if name_lower.ends_with(".tar.gz") || ext_lower == "tgz" || ext_lower == "tar" {
-                    // For tar, stem may be "foo.tar" for ".tar.gz" — get the base name
-                    let extract_name = if name_lower.ends_with(".tar.gz") {
+                } else if is_compressed_tar && !a.decompress_direct {
+                    // u on .tar.gz/.tgz/.tar.xz/.txz → decompress outer layer only → .tar
+                    let output_name = stream_decompress_output_name(&entry.name);
+                    let output_path = dest.join(&output_name);
+                    if output_path.exists() {
+                        app.dialog.confirm = Some(ConfirmDialog {
+                            title: "Overwrite?".to_string(),
+                            message: format!(
+                                "\"{}\" already exists.\n\nOverwrite?",
+                                output_name
+                            ),
+                            action: ConfirmAction::StreamDecompressOverwrite {
+                                path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        });
+                    } else {
+                        app.start_background_op(
+                            ctx,
+                            OpKind::StreamDecompress {
+                                path: entry.path.clone(),
+                                dest_dir: dest,
+                            },
+                        );
+                    }
+                } else if is_compressed_tar || ext_lower == "tar" {
+                    // Alt+u on .tar.gz/.tgz/.tar.xz/.txz, or u on .tar → full tar extract
+                    let extract_name = if name_lower.ends_with(".tar.gz") || name_lower.ends_with(".tar.xz") {
                         PathBuf::from(&entry.name)
                             .file_stem()
                             .and_then(|s| PathBuf::from(s).file_stem().map(|s2| s2.to_string_lossy().to_string()))
@@ -562,6 +597,23 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                 }
             }
         }
+    }
+}
+
+/// Compute output filename for stream decompression (strip outer compression extension).
+/// e.g. "foo.tar.gz" → "foo.tar", "bar.tgz" → "bar.tar", "baz.tar.xz" → "baz.tar"
+fn stream_decompress_output_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".tar.gz") {
+        format!("{}.tar", &name[..name.len() - 3]) // strip ".gz"
+    } else if lower.ends_with(".tar.xz") {
+        format!("{}.tar", &name[..name.len() - 3]) // strip ".xz"
+    } else if lower.ends_with(".tgz") {
+        format!("{}.tar", &name[..name.len() - 4]) // strip ".tgz", add ".tar"
+    } else if lower.ends_with(".txz") {
+        format!("{}.tar", &name[..name.len() - 4]) // strip ".txz", add ".tar"
+    } else {
+        name.to_string()
     }
 }
 
