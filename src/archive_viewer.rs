@@ -5,6 +5,9 @@ use eframe::egui;
 
 use crate::file_item::format_size;
 
+/// Maximum number of entries to list in archive preview.
+const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+
 pub struct ArchivePreview {
     pub title: String,
     content: String,
@@ -72,7 +75,8 @@ fn list_zip_contents(path: &Path) -> Option<String> {
     let mut total_size: u64 = 0;
     let file_count = archive.len();
 
-    for i in 0..file_count {
+    let display_count = file_count.min(MAX_ARCHIVE_ENTRIES);
+    for i in 0..display_count {
         let entry = archive.by_index(i).ok()?;
         let name = entry.name().to_string();
         let size = entry.size();
@@ -101,7 +105,11 @@ fn list_zip_contents(path: &Path) -> Option<String> {
         lines.push(format!("{}  {}  {}", date_str, size_str, name));
     }
 
-    let header = format!("{} files, {}", file_count, format_size(total_size));
+    let header = if file_count > display_count {
+        format!("{} files (先頭{}件のみ表示)", file_count, MAX_ARCHIVE_ENTRIES)
+    } else {
+        format!("{} files, {}", file_count, format_size(total_size))
+    };
     let separator = "─".repeat(60);
 
     let mut result = String::new();
@@ -140,6 +148,7 @@ fn list_tar_contents(path: &Path) -> Option<String> {
     let mut total_size: u64 = 0;
     let mut file_count: usize = 0;
 
+    let mut truncated = false;
     for entry_result in entries {
         let Ok(entry) = entry_result else { continue };
         let Ok(entry_path) = entry.path().map(|p| p.to_string_lossy().to_string()) else { continue };
@@ -147,6 +156,11 @@ fn list_tar_contents(path: &Path) -> Option<String> {
         let size = entry.size();
         total_size += size;
         file_count += 1;
+
+        if file_count > MAX_ARCHIVE_ENTRIES {
+            truncated = true;
+            break;
+        }
 
         let mtime = entry.header().mtime().unwrap_or(0);
         let date_str = if mtime > 0 {
@@ -169,7 +183,11 @@ fn list_tar_contents(path: &Path) -> Option<String> {
         lines.push(format!("{}  {}  {}", date_str, size_str, entry_path));
     }
 
-    let header = format!("{} files, {}", file_count, format_size(total_size));
+    let header = if truncated {
+        format!("{}+ files (先頭{}件のみ表示)", file_count, MAX_ARCHIVE_ENTRIES)
+    } else {
+        format!("{} files, {}", file_count, format_size(total_size))
+    };
     let separator = "─".repeat(60);
 
     let mut result = String::new();
