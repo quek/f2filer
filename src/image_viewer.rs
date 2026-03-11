@@ -25,6 +25,7 @@ struct DecodedImage {
     frames: Vec<DecodedFrame>,
 }
 
+#[derive(Clone)]
 struct AnimFrame {
     texture: egui::TextureHandle,
     delay_ms: u32,
@@ -89,14 +90,7 @@ impl ImageCache {
             self.order.retain(|p| p != &key);
             self.order.push(key);
 
-            let frames: Vec<AnimFrame> = entry
-                .frames
-                .iter()
-                .map(|f| AnimFrame {
-                    texture: f.texture.clone(),
-                    delay_ms: f.delay_ms,
-                })
-                .collect();
+            let frames = entry.frames.clone();
 
             return Some(ImagePreview {
                 title: path.file_name()?.to_string_lossy().to_string(),
@@ -180,18 +174,10 @@ impl ImageCache {
             }
         }
 
-        let cache_frames: Vec<AnimFrame> = anim_frames
-            .iter()
-            .map(|f| AnimFrame {
-                texture: f.texture.clone(),
-                delay_ms: f.delay_ms,
-            })
-            .collect();
-
         self.entries.insert(
             path.clone(),
             CacheEntry {
-                frames: cache_frames,
+                frames: anim_frames.clone(),
                 image_size,
                 total_duration_ms,
                 mtime: self.wanted_mtime,

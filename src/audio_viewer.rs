@@ -54,6 +54,9 @@ fn scan_wav_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     let spec = reader.spec();
     let sample_rate = spec.sample_rate;
     let channels = spec.channels;
+    if sample_rate == 0 || channels == 0 {
+        return None;
+    }
     let total_samples = reader.duration(); // per channel
     let duration_secs = total_samples as f32 / sample_rate as f32;
 
@@ -64,6 +67,9 @@ fn scan_wav_header_and_silence(path: &Path) -> Option<(f32, u32, u16, f32)> {
     match spec.sample_format {
         hound::SampleFormat::Int => {
             let bits = spec.bits_per_sample;
+            if bits == 0 || bits > 32 {
+                return None;
+            }
             let max_val = (1u32 << (bits - 1)) as f32;
             let mut count = 0usize;
             let mut frame_max: f32 = 0.0;
@@ -164,10 +170,16 @@ fn load_waveform_wav(path: &Path, waveform: &Arc<Mutex<Vec<f32>>>) {
     let Ok(reader) = hound::WavReader::open(path) else { return };
     let spec = reader.spec();
     let channels = spec.channels as usize;
+    if channels == 0 {
+        return;
+    }
 
     let raw_samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
             let bits = spec.bits_per_sample;
+            if bits == 0 || bits > 32 {
+                return;
+            }
             let max_val = (1u32 << (bits - 1)) as f32;
             reader
                 .into_samples::<i32>()

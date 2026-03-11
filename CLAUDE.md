@@ -47,6 +47,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - 音声プレビュー（WAV/OGG/AIFF）は再生（rodio ストリーミング）と波形読み込み（バックグラウンドスレッド）を分離して即時再生
 - WAV の波形読み込み・無音検出は hound で高速処理。OGG/AIFF は rodio::Decoder でサンプルをデコードして処理
 - 音声再生時は先頭の無音部分を自動スキップ（閾値 0.01）
+- WAV ヘッダーのパラメータ（`channels`, `sample_rate`, `bits_per_sample`）は算術演算前にバリデーション。不正値（0、範囲外）は `None` を返してプレビュースキップ
 - 再帰検索（`Alt+f`）はフィルターと統合。BFS でバックグラウンド走査し 500 件ごとにストリーミングで UI に反映（上限 100,000 件）。走査中もフィルタリング・ブラウズ可能。パスバーにカーソル位置のフルパスを表示。Enter でファイルの親ディレクトリに移動しカーソルを合わせる
 - ファイルリストのカラムは `ui.painter().text()` で直接ピクセル位置に描画（レイアウトシステムをバイパス）
 - WSL ディストリビューションは `wsl.exe --list --quiet`（UTF-16LE）で検出しドライブ一覧に `WSL:distro` として統合（`read_dir` は UNC サーバー名に非対応）
@@ -63,6 +64,9 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - egui の `key_pressed()` はイベントを消費しないため、同一フレームで複数箇所が true を返す。サブモードで Escape を処理する場合は `input_mut(|i| i.consume_key(...))` を使い、外側のダイアログ閉じ処理にイベントが伝播しないようにする
 - egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。スクロールが必要なダイアログは Window の `.vscroll(true)` に統一し、内側 ScrollArea は使わない
 - ステータスバーのメッセージは `set_status()` / `set_status_error()` で設定。エラーメッセージは赤太字（`Color32::from_rgb(255, 80, 80)`）で表示。`status_message` フィールドに直接代入しないこと
+- プレビューのサイズ制限: テキスト 1MB (`MAX_PREVIEW_BYTES`)、アーカイブ 10,000件 (`MAX_ARCHIVE_ENTRIES`)、音声スキャン 5秒、画像 200MB (`MAX_IMAGE_FILE_SIZE`)
+- 2段階解凍: `.tar.gz`/`.tar.xz` に対して `u` → 外側の圧縮のみ解除（`.tar` 生成）、`Alt+U` → 一括展開。出力ファイル名の計算は `file_ops::stream_decompress_output_name()` に一元化
+- Config のデシリアライズ後に `sanitize()` でバリデーション。`font_size`（8〜40、有限値）、ウィンドウサイズ（100以上、有限値）、座標（有限値）を検証し、不正値は `None` にリセット
 
 ## Coding Principles
 
@@ -112,7 +116,13 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - ファイル削除はトラッシュ（ゴミ箱）経由で行う（`trash` crate）。UNC パスはゴミ箱非対応のため直接削除にフォールバックし、確認ダイアログで警告表示
 - 破壊的操作（削除、上書き）は必ず確認ダイアログを表示する
 - Windowsファイル属性の安全な読み取り
-- パストラバーサル攻撃を防ぐ
+- パストラバーサル攻撃を防ぐ: TAR は明示的パスチェック（`is_absolute()` + `ParentDir`）、ZIP は `enclosed_name()` + `starts_with()` の二重防御
+- `validate_name()` で Windows 予約デバイス名（CON, PRN, AUX, NUL, COM1-9, LPT1-9）を拒否
+
+### 外部データの防御的バリデーション
+- ファイルヘッダー、設定ファイル等の外部データは、算術演算（除算、ビットシフト、インデックス）に使う前に必ず値域を検証する
+- ゼロ除算、整数オーバーフロー、シフト量超過はパニックに直結する。「正常なファイルではありえない値」でも、不正・破損ファイルでは発生する
+- バリデーション失敗時は早期リターン（`return None` 等）で安全に処理をスキップする
 
 ### データ整合性の事後検証（Write-then-Verify）
 - ファイラーにとってデータロストは致命的。ファイルを生成・変換する操作は、完了後に結果を検証する

@@ -1170,6 +1170,8 @@ mod tests {
             cached_headers: None,
             back_stack: Vec::new(),
             forward_stack: Vec::new(),
+            cursor_full_name: None,
+            preview_needs_update: false,
         };
         panel.rebuild_filter();
         panel

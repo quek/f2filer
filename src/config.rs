@@ -77,9 +77,42 @@ impl Config {
     pub fn load() -> Self {
         let path = Self::config_path();
         if let Ok(data) = std::fs::read_to_string(&path) {
-            serde_json::from_str(&data).unwrap_or_default()
+            let mut config: Config = serde_json::from_str(&data).unwrap_or_default();
+            config.sanitize();
+            config
         } else {
             Config::default()
+        }
+    }
+
+    /// Clamp config values to valid ranges after deserialization.
+    fn sanitize(&mut self) {
+        // font_size: must be finite and in range 8.0..=40.0
+        if let Some(size) = self.font_size {
+            if !size.is_finite() || size < 8.0 || size > 40.0 {
+                self.font_size = None;
+            }
+        }
+        // window dimensions: must be finite and positive
+        if let Some(w) = self.window_width {
+            if !w.is_finite() || w < 100.0 {
+                self.window_width = None;
+            }
+        }
+        if let Some(h) = self.window_height {
+            if !h.is_finite() || h < 100.0 {
+                self.window_height = None;
+            }
+        }
+        if let Some(x) = self.window_x {
+            if !x.is_finite() {
+                self.window_x = None;
+            }
+        }
+        if let Some(y) = self.window_y {
+            if !y.is_finite() {
+                self.window_y = None;
+            }
         }
     }
 
@@ -156,6 +189,54 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert!(config.drive_dirs.is_empty());
         assert!(config.registered_dirs.is_empty());
+        assert!(config.window_x.is_none());
+    }
+
+    #[test]
+    fn sanitize_resets_invalid_font_size() {
+        let mut config = Config::default();
+        config.font_size = Some(f32::NAN);
+        config.sanitize();
+        assert!(config.font_size.is_none());
+
+        config.font_size = Some(f32::INFINITY);
+        config.sanitize();
+        assert!(config.font_size.is_none());
+
+        config.font_size = Some(-5.0);
+        config.sanitize();
+        assert!(config.font_size.is_none());
+
+        config.font_size = Some(100.0);
+        config.sanitize();
+        assert!(config.font_size.is_none());
+    }
+
+    #[test]
+    fn sanitize_keeps_valid_values() {
+        let mut config = Config::default();
+        config.font_size = Some(16.0);
+        config.window_width = Some(1200.0);
+        config.window_height = Some(800.0);
+        config.window_x = Some(100.0);
+        config.window_y = Some(50.0);
+        config.sanitize();
+        assert_eq!(config.font_size, Some(16.0));
+        assert_eq!(config.window_width, Some(1200.0));
+        assert_eq!(config.window_height, Some(800.0));
+        assert_eq!(config.window_x, Some(100.0));
+        assert_eq!(config.window_y, Some(50.0));
+    }
+
+    #[test]
+    fn sanitize_resets_invalid_window_dimensions() {
+        let mut config = Config::default();
+        config.window_width = Some(-100.0);
+        config.window_height = Some(f32::NEG_INFINITY);
+        config.window_x = Some(f32::NAN);
+        config.sanitize();
+        assert!(config.window_width.is_none());
+        assert!(config.window_height.is_none());
         assert!(config.window_x.is_none());
     }
 }

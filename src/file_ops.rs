@@ -274,7 +274,7 @@ pub fn create_file(parent: &Path, name: &str) -> Result<PathBuf, FileOpError> {
     Ok(new_path)
 }
 
-/// Reject names containing path separators or traversal components
+/// Reject names containing path separators, traversal components, or Windows reserved names
 fn validate_name(name: &str) -> Result<(), FileOpError> {
     if name.is_empty()
         || name.contains('/')
@@ -288,6 +288,24 @@ fn validate_name(name: &str) -> Result<(), FileOpError> {
             format!("Invalid name: {}", name),
         )));
     }
+
+    // Reject Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+    let stem = name.split('.').next().unwrap_or(name);
+    let upper = stem.to_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL"
+            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
+            | "COM6" | "COM7" | "COM8" | "COM9"
+            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
+            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    ) {
+        return Err(FileOpError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Reserved name: {}", name),
+        )));
+    }
+
     Ok(())
 }
 
@@ -774,17 +792,22 @@ pub fn decompress_zip_with_progress(
             }
         };
 
-        let entry_name = entry.enclosed_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        let out_path = match entry.enclosed_name() {
-            Some(name) => extract_dir.join(name),
+        let enclosed = match entry.enclosed_name() {
+            Some(name) => name.to_path_buf(),
             None => {
                 errors.push("Invalid zip entry name".to_string());
                 continue;
             }
         };
+
+        let out_path = extract_dir.join(&enclosed);
+        // Security: reject paths that escape the extraction directory
+        if !out_path.starts_with(&extract_dir) {
+            errors.push(format!("Skipped unsafe path: {}", enclosed.display()));
+            continue;
+        }
+
+        let entry_name = enclosed.to_string_lossy().to_string();
 
         if entry.is_dir() {
             if let Err(e) = fs::create_dir_all(&out_path) {
@@ -948,6 +971,24 @@ pub fn decompress_tar_with_progress(
     progress.finish(msg, vec![tar_path.to_path_buf()], errors.first().cloned(), Some(extract_dir));
 }
 
+/// Compute output filename for stream decompression (strip outer compression extension).
+/// e.g. "foo.tar.gz" → "foo.tar", "bar.tgz" → "bar.tar", "baz.tar.xz" → "baz.tar"
+/// Returns the input unchanged if the extension is not recognized.
+pub fn stream_decompress_output_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".tar.gz") {
+        name[..name.len() - 3].to_string() // strip ".gz", keep ".tar"
+    } else if lower.ends_with(".tar.xz") {
+        name[..name.len() - 3].to_string() // strip ".xz", keep ".tar"
+    } else if lower.ends_with(".tgz") {
+        format!("{}.tar", &name[..name.len() - 4])
+    } else if lower.ends_with(".txz") {
+        format!("{}.tar", &name[..name.len() - 4])
+    } else {
+        name.to_string()
+    }
+}
+
 /// Decompress a single compressed file (gz/xz) to produce the inner file (e.g. .tar).
 /// Only strips the outer compression layer; does NOT extract tar contents.
 pub fn decompress_stream_with_progress(
@@ -959,21 +1000,12 @@ pub fn decompress_stream_with_progress(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    let lower = file_name.to_lowercase();
-
-    // Determine output filename
-    let output_name = if lower.ends_with(".tar.gz") {
-        format!("{}.tar", &file_name[..file_name.len() - 3])
-    } else if lower.ends_with(".tar.xz") {
-        format!("{}.tar", &file_name[..file_name.len() - 3])
-    } else if lower.ends_with(".tgz") {
-        format!("{}.tar", &file_name[..file_name.len() - 4])
-    } else if lower.ends_with(".txz") {
-        format!("{}.tar", &file_name[..file_name.len() - 4])
-    } else {
+    let output_name = stream_decompress_output_name(file_name);
+    if output_name == file_name {
         progress.finish("Error: unsupported format".to_string(), Vec::new(), Some("Unsupported format".to_string()), None);
         return;
-    };
+    }
+    let lower = file_name.to_lowercase();
 
     let output_path = dest_dir.join(&output_name);
     let is_gzip = lower.ends_with(".tar.gz") || lower.ends_with(".tgz");
@@ -1592,6 +1624,35 @@ mod tests {
         assert!(validate_name("日本語.txt").is_ok());
         assert!(validate_name(".hidden").is_ok());
         assert!(validate_name("file with spaces").is_ok());
+        // Non-reserved names that look similar
+        assert!(validate_name("CONN").is_ok());
+        assert!(validate_name("console.log").is_ok());
+        assert!(validate_name("nully").is_ok());
+        assert!(validate_name("com10").is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_reserved_windows_names() {
+        assert!(validate_name("CON").is_err());
+        assert!(validate_name("con").is_err());
+        assert!(validate_name("PRN").is_err());
+        assert!(validate_name("AUX").is_err());
+        assert!(validate_name("NUL").is_err());
+        assert!(validate_name("COM1").is_err());
+        assert!(validate_name("LPT1").is_err());
+        assert!(validate_name("con.txt").is_err());
+        assert!(validate_name("NUL.tar.gz").is_err());
+    }
+
+    #[test]
+    fn stream_decompress_output_name_cases() {
+        assert_eq!(stream_decompress_output_name("archive.tar.gz"), "archive.tar");
+        assert_eq!(stream_decompress_output_name("archive.tar.xz"), "archive.tar");
+        assert_eq!(stream_decompress_output_name("archive.tgz"), "archive.tar");
+        assert_eq!(stream_decompress_output_name("archive.txz"), "archive.tar");
+        assert_eq!(stream_decompress_output_name("Archive.TAR.GZ"), "Archive.TAR");
+        assert_eq!(stream_decompress_output_name("Archive.TAR.XZ"), "Archive.TAR");
+        assert_eq!(stream_decompress_output_name("other.bin"), "other.bin");
     }
 
     #[test]

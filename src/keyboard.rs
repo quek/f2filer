@@ -537,7 +537,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                     }
                 } else if is_compressed_tar && !a.decompress_direct {
                     // u on .tar.gz/.tgz/.tar.xz/.txz → decompress outer layer only → .tar
-                    let output_name = stream_decompress_output_name(&entry.name);
+                    let output_name = crate::file_ops::stream_decompress_output_name(&entry.name);
                     let output_path = dest.join(&output_name);
                     if output_path.exists() {
                         app.dialog.confirm = Some(ConfirmDialog {
@@ -597,23 +597,6 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                 }
             }
         }
-    }
-}
-
-/// Compute output filename for stream decompression (strip outer compression extension).
-/// e.g. "foo.tar.gz" → "foo.tar", "bar.tgz" → "bar.tar", "baz.tar.xz" → "baz.tar"
-fn stream_decompress_output_name(name: &str) -> String {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".tar.gz") {
-        format!("{}.tar", &name[..name.len() - 3]) // strip ".gz"
-    } else if lower.ends_with(".tar.xz") {
-        format!("{}.tar", &name[..name.len() - 3]) // strip ".xz"
-    } else if lower.ends_with(".tgz") {
-        format!("{}.tar", &name[..name.len() - 4]) // strip ".tgz", add ".tar"
-    } else if lower.ends_with(".txz") {
-        format!("{}.tar", &name[..name.len() - 4]) // strip ".txz", add ".tar"
-    } else {
-        name.to_string()
     }
 }
 
