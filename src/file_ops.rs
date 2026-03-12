@@ -735,6 +735,39 @@ pub fn compress_to_zip_with_progress(
     }
 }
 
+/// Decode a ZIP entry name, falling back to Shift_JIS if not valid UTF-8.
+pub fn decode_zip_entry_name(entry: &zip::read::ZipFile<'_, impl std::io::Read>) -> String {
+    let raw = entry.name_raw();
+    match std::str::from_utf8(raw) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            let (decoded, _, _) = encoding_rs::SHIFT_JIS.decode(raw);
+            decoded.into_owned()
+        }
+    }
+}
+
+/// Create a safe PathBuf from a decoded ZIP entry name, rejecting path traversal.
+/// This replaces `enclosed_name()` for use with manually decoded names.
+fn safe_zip_entry_path(name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(name);
+    // Reject absolute paths
+    if path.is_absolute() {
+        return None;
+    }
+    // Reject paths containing parent directory references
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return None;
+        }
+    }
+    // Reject empty paths
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
 pub fn decompress_zip_with_progress(
     zip_path: &Path,
     dest_dir: &Path,
@@ -792,8 +825,9 @@ pub fn decompress_zip_with_progress(
             }
         };
 
-        let enclosed = match entry.enclosed_name() {
-            Some(name) => name.to_path_buf(),
+        let decoded_name = decode_zip_entry_name(&entry);
+        let enclosed = match safe_zip_entry_path(&decoded_name) {
+            Some(name) => name,
             None => {
                 errors.push("Invalid zip entry name".to_string());
                 continue;
@@ -1391,13 +1425,14 @@ pub fn decompress_zip(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, FileO
         let mut entry = archive.by_index(i)
             .map_err(|e| FileOpError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
-        let name = entry.enclosed_name()
+        let decoded_name = decode_zip_entry_name(&entry);
+        let name = safe_zip_entry_path(&decoded_name)
             .ok_or_else(|| FileOpError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid zip entry name",
             )))?;
 
-        let out_path = extract_dir.join(name);
+        let out_path = extract_dir.join(&name);
 
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;

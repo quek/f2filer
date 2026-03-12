@@ -4,6 +4,7 @@ use std::path::Path;
 use eframe::egui;
 
 use crate::file_item::format_size;
+use crate::file_ops::decode_zip_entry_name;
 
 /// Maximum number of entries to list in archive preview.
 const MAX_ARCHIVE_ENTRIES: usize = 10_000;
@@ -80,7 +81,7 @@ fn list_zip_contents(path: &Path) -> Option<String> {
     let display_count = file_count.min(MAX_ARCHIVE_ENTRIES);
     for i in 0..display_count {
         let entry = archive.by_index(i).ok()?;
-        let name = entry.name().to_string();
+        let name = decode_zip_entry_name(&entry);
         let size = entry.size();
         total_size += size;
 
