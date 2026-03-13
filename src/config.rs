@@ -12,6 +12,12 @@ pub struct RegisteredDir {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct TabConfig {
+    pub left_dir: String,
+    pub right_dir: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub show_hidden: bool,
     pub last_left_dir: Option<String>,
@@ -41,6 +47,10 @@ pub struct Config {
     pub font_size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keybindings_override: Option<HashMap<Action, Vec<KeyBinding>>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<TabConfig>,
+    #[serde(default)]
+    pub active_tab: usize,
 }
 
 impl Default for Config {
@@ -61,6 +71,8 @@ impl Default for Config {
             font_path: None,
             font_size: None,
             keybindings_override: None,
+            tabs: Vec::new(),
+            active_tab: 0,
         }
     }
 }

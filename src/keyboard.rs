@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::app::{ActivePanel, F2App};
+use crate::app::F2App;
+use crate::app::ActivePanel;
 use crate::dialog::*;
 use crate::file_ops;
 use crate::keybind::Action;
@@ -142,6 +143,10 @@ pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
         history_back: kb.is_action_pressed(Action::HistoryBack, i),
         history_forward: kb.is_action_pressed(Action::HistoryForward, i),
         history_list: kb.is_action_pressed(Action::HistoryList, i),
+        new_tab: kb.is_action_pressed(Action::NewTab, i),
+        close_tab: kb.is_action_pressed(Action::CloseTab, i),
+        prev_tab: kb.is_action_pressed(Action::PrevTab, i),
+        next_tab: kb.is_action_pressed(Action::NextTab, i),
     });
 
     handle_navigation(app, &actions);
@@ -212,12 +217,17 @@ struct ActionFlags {
     history_back: bool,
     history_forward: bool,
     history_list: bool,
+    new_tab: bool,
+    close_tab: bool,
+    prev_tab: bool,
+    next_tab: bool,
 }
 
 fn handle_navigation(app: &mut F2App, a: &ActionFlags) {
     // Switch panel
     if a.switch_panel {
-        app.active = match app.active {
+        let tab = app.tab_mut();
+        tab.active = match tab.active {
             ActivePanel::Left => ActivePanel::Right,
             ActivePanel::Right => ActivePanel::Left,
         };
@@ -705,11 +715,11 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
 
     // Toggle preview mode
     if a.toggle_preview {
-        if app.preview_mode {
-            app.preview_mode = false;
+        if app.tab().preview_mode {
+            app.tab_mut().preview_mode = false;
             app.clear_all_previews();
         } else {
-            app.preview_mode = true;
+            app.tab_mut().preview_mode = true;
             app.update_preview(ctx);
         }
     }
@@ -828,8 +838,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
         match app.undo_history.undo() {
             Ok(msg) => {
                 app.set_status(msg);
-                app.left_panel.refresh();
-                app.right_panel.refresh();
+                app.refresh_both_panels();
                 app.update_preview(ctx);
             }
             Err(msg) => {
@@ -843,8 +852,7 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
         match app.undo_history.redo() {
             Ok(msg) => {
                 app.set_status(msg);
-                app.left_panel.refresh();
-                app.right_panel.refresh();
+                app.refresh_both_panels();
                 app.update_preview(ctx);
             }
             Err(msg) => {
@@ -880,5 +888,25 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
     if a.command_mode {
         app.command_mode = true;
         app.command_line.clear();
+    }
+
+    // Tab operations
+    if a.new_tab {
+        app.new_tab(ctx);
+    }
+    if a.close_tab {
+        app.close_tab_at(app.active_tab);
+    }
+    if a.prev_tab {
+        let new_idx = if app.active_tab == 0 {
+            app.tabs.len() - 1
+        } else {
+            app.active_tab - 1
+        };
+        app.switch_to_tab(new_idx, ctx);
+    }
+    if a.next_tab {
+        let new_idx = (app.active_tab + 1) % app.tabs.len();
+        app.switch_to_tab(new_idx, ctx);
     }
 }

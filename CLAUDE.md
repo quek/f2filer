@@ -58,7 +58,8 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - **UIスレッドで `path.exists()` や `fs::metadata()` など I/O ブロッキング呼び出しを行わないこと。** HDD/ネットワーク/WSL ドライブでは数秒かかる場合がある。`navigate_to_with_resolver` でパス解決も含めてバックグラウンドで実行する
 - ディレクトリの自動リフレッシュは `fs::metadata().modified()` の mtime ポーリング（2秒間隔）で実現。カーソル位置・選択状態はファイル名で復元
 - ディレクトリ毎のカーソル位置は `cursor_history` でファイル名ベースで保存し、再訪・再起動時に復元。`cursor_dirty` で変更追跡し、両パネル間の上書きを防止。`loading_old_name` は上方向移動時のみ設定
-- キーバインドは `keybind.rs` で一元管理。`Action` enum (40アクション) と `KeyBinding` (キー+修飾キー) の組み合わせで定義。`KeyBindings::defaults()` でハードコードされたデフォルトを定義し、`config.json` の `keybindings_override` で部分上書きが可能。`is_action_pressed(action, &InputState)` で統一的にキー判定。ダイアログ固有キー（y/n、ドライブレター等）は対象外でハードコードのまま
+- タブ機能は `TabState` 構造体に左右パネル＋プレビュー状態をグループ化。`F2App` は `Vec<TabState>` + `active_tab: usize` を持ち、`active_panel()` / `inactive_panel()` はアクティブタブ経由で委譲。タブバーは2つ以上のタブがあるときのみ `TopBottomPanel::top("tab_bar")` で表示。タブ切替時は前タブの音声/動画プレビューを停止。Config の `tabs: Vec<TabConfig>` で永続化し、空なら `last_left_dir`/`last_right_dir` でフォールバック（後方互換）
+- キーバインドは `keybind.rs` で一元管理。`Action` enum (44アクション) と `KeyBinding` (キー+修飾キー) の組み合わせで定義。`KeyBindings::defaults()` でハードコードされたデフォルトを定義し、`config.json` の `keybindings_override` で部分上書きが可能。`is_action_pressed(action, &InputState)` で統一的にキー判定。ダイアログ固有キー（y/n、ドライブレター等）は対象外でハードコードのまま
 - Settings ダイアログはタブ式（Font / Keybindings）。`SettingsSection` enum で切替。Keybindings タブではアクション一覧を表示し、Enter で選択→キー入力でバインド変更。競合検出・確認ダイアログ付き。`d` キーでデフォルトに戻す
 - egui Window のスクロールは `.vscroll(true)` を Window 自体に設定するのが最も安定。内側に独自 ScrollArea を配置すると、スクロール位置の永続化やサイズ計算で問題が起きやすい
 - egui の `key_pressed()` はイベントを消費しないため、同一フレームで複数箇所が true を返す。サブモードで Escape を処理する場合は `input_mut(|i| i.consume_key(...))` を使い、外側のダイアログ閉じ処理にイベントが伝播しないようにする

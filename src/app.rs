@@ -33,11 +33,10 @@ pub enum ActivePanel {
     Right,
 }
 
-pub struct F2App {
+pub struct TabState {
     pub(crate) left_panel: FilePanel,
     pub(crate) right_panel: FilePanel,
     pub(crate) active: ActivePanel,
-    pub(crate) dialog: DialogState,
     pub(crate) text_preview: Option<TextPreview>,
     pub(crate) archive_preview: Option<archive_viewer::ArchivePreview>,
     pub(crate) image_preview: Option<ImagePreview>,
@@ -46,75 +45,29 @@ pub struct F2App {
     pub(crate) video_preview: Option<VideoPreview>,
     pub(crate) preview_mode: bool,
     preview_mtime: Option<std::time::SystemTime>,
-    pub(crate) command_line: String,
-    pub(crate) command_mode: bool,
-    pub(crate) status_message: String,
-    pub(crate) status_is_error: bool,
-    pub(crate) drives: Arc<Mutex<Vec<String>>>,
-    pub(crate) config: Config,
-    window_pos: Option<egui::Pos2>,
-    window_size: Option<egui::Vec2>,
-    pub(crate) undo_history: UndoHistory,
-    skip_next_drop: bool,
-    pub(crate) sort_pending: bool,
-    pub(crate) keybindings: KeyBindings,
 }
 
-impl F2App {
-    pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
-        setup_fonts(&cc.egui_ctx, config.font_path.as_deref(), config.font_size);
-
-        let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
-        let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
-
-        let drives = Arc::new(Mutex::new(Vec::new()));
-        {
-            let drives_handle = Arc::clone(&drives);
-            let repaint_ctx = cc.egui_ctx.clone();
-            std::thread::spawn(move || {
-                let result = file_ops::get_drives();
-                *drives_handle.lock() = result;
-                repaint_ctx.request_repaint();
-            });
-        }
-
-        // Load cursor history from config
-        let cursor_history: std::collections::HashMap<PathBuf, String> = config
-            .cursor_dirs
-            .iter()
-            .map(|(k, v)| (PathBuf::from(k), v.clone()))
-            .collect();
-
+impl TabState {
+    fn new(
+        left_dir: PathBuf,
+        right_dir: PathBuf,
+        cursor_history: &std::collections::HashMap<PathBuf, String>,
+        sort_history: &std::collections::HashMap<PathBuf, (crate::sort::SortKey, crate::sort::SortOrder)>,
+    ) -> Self {
         let mut left_panel = FilePanel::new(left_dir);
         let mut right_panel = FilePanel::new(right_dir);
         left_panel.cursor_history = cursor_history.clone();
-        right_panel.cursor_history = cursor_history;
+        right_panel.cursor_history = cursor_history.clone();
         left_panel.restore_cursor_from_history();
         right_panel.restore_cursor_from_history();
-
-        // Load sort history from config
-        let sort_history: std::collections::HashMap<PathBuf, (crate::sort::SortKey, crate::sort::SortOrder)> = config
-            .sort_dirs
-            .iter()
-            .filter_map(|(k, v)| {
-                crate::sort::sort_from_string(v).map(|sort| (PathBuf::from(k), sort))
-            })
-            .collect();
         left_panel.sort_history = sort_history.clone();
-        right_panel.sort_history = sort_history;
+        right_panel.sort_history = sort_history.clone();
         left_panel.restore_sort_from_history();
         right_panel.restore_sort_from_history();
-
-        let keybindings = match &config.keybindings_override {
-            Some(overrides) => KeyBindings::merge_with_defaults(overrides),
-            None => KeyBindings::defaults(),
-        };
-
-        F2App {
+        TabState {
             left_panel,
             right_panel,
             active: ActivePanel::Left,
-            dialog: DialogState::default(),
             text_preview: None,
             archive_preview: None,
             image_preview: None,
@@ -123,29 +76,7 @@ impl F2App {
             video_preview: None,
             preview_mode: false,
             preview_mtime: None,
-            command_line: String::new(),
-            command_mode: false,
-            status_message: String::new(),
-            status_is_error: false,
-            drives,
-            window_pos: None,
-            window_size: None,
-            config,
-            undo_history: UndoHistory::new(),
-            skip_next_drop: false,
-            sort_pending: false,
-            keybindings,
         }
-    }
-
-    pub(crate) fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = msg.into();
-        self.status_is_error = false;
-    }
-
-    pub(crate) fn set_status_error(&mut self, msg: impl Into<String>) {
-        self.status_message = msg.into();
-        self.status_is_error = true;
     }
 
     pub(crate) fn active_panel(&self) -> &FilePanel {
@@ -270,47 +201,269 @@ impl F2App {
         self.video_preview = None;
     }
 
-    pub(crate) fn save_config(&mut self) {
-        // Save current cursor positions before persisting
-        self.left_panel.save_cursor_position();
-        self.right_panel.save_cursor_position();
+    /// Stop all media playback (for tab switching).
+    pub(crate) fn stop_media(&mut self) {
+        if let Some(ap) = &mut self.audio_preview {
+            ap.stop();
+        }
+        self.stop_video_preview();
+    }
+}
 
+pub struct F2App {
+    pub(crate) tabs: Vec<TabState>,
+    pub(crate) active_tab: usize,
+    pub(crate) dialog: DialogState,
+    pub(crate) command_line: String,
+    pub(crate) command_mode: bool,
+    pub(crate) status_message: String,
+    pub(crate) status_is_error: bool,
+    pub(crate) drives: Arc<Mutex<Vec<String>>>,
+    pub(crate) config: Config,
+    window_pos: Option<egui::Pos2>,
+    window_size: Option<egui::Vec2>,
+    pub(crate) undo_history: UndoHistory,
+    skip_next_drop: bool,
+    pub(crate) sort_pending: bool,
+    pub(crate) keybindings: KeyBindings,
+}
+
+impl F2App {
+    pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
+        setup_fonts(&cc.egui_ctx, config.font_path.as_deref(), config.font_size);
+
+        let left_dir = restore_dir(&config.last_left_dir).unwrap_or_else(default_dir);
+        let right_dir = restore_dir(&config.last_right_dir).unwrap_or_else(default_dir);
+
+        let drives = Arc::new(Mutex::new(Vec::new()));
+        {
+            let drives_handle = Arc::clone(&drives);
+            let repaint_ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                let result = file_ops::get_drives();
+                *drives_handle.lock() = result;
+                repaint_ctx.request_repaint();
+            });
+        }
+
+        // Load cursor history from config
+        let cursor_history: std::collections::HashMap<PathBuf, String> = config
+            .cursor_dirs
+            .iter()
+            .map(|(k, v)| (PathBuf::from(k), v.clone()))
+            .collect();
+
+        // Load sort history from config
+        let sort_history: std::collections::HashMap<PathBuf, (crate::sort::SortKey, crate::sort::SortOrder)> = config
+            .sort_dirs
+            .iter()
+            .filter_map(|(k, v)| {
+                crate::sort::sort_from_string(v).map(|sort| (PathBuf::from(k), sort))
+            })
+            .collect();
+
+        // Build tab dir pairs: from saved tabs, or fallback to last_left_dir/last_right_dir
+        let tab_dirs: Vec<(PathBuf, PathBuf)> = if config.tabs.is_empty() {
+            vec![(left_dir, right_dir)]
+        } else {
+            config.tabs.iter().map(|tc| {
+                let l = restore_dir(&Some(tc.left_dir.clone())).unwrap_or_else(default_dir);
+                let r = restore_dir(&Some(tc.right_dir.clone())).unwrap_or_else(default_dir);
+                (l, r)
+            }).collect()
+        };
+
+        let tabs: Vec<TabState> = tab_dirs.into_iter().map(|(l, r)| {
+            TabState::new(l, r, &cursor_history, &sort_history)
+        }).collect();
+
+        let active_tab = config.active_tab.min(tabs.len().saturating_sub(1));
+
+        let keybindings = match &config.keybindings_override {
+            Some(overrides) => KeyBindings::merge_with_defaults(overrides),
+            None => KeyBindings::defaults(),
+        };
+
+        F2App {
+            tabs,
+            active_tab,
+            dialog: DialogState::default(),
+            command_line: String::new(),
+            command_mode: false,
+            status_message: String::new(),
+            status_is_error: false,
+            drives,
+            window_pos: None,
+            window_size: None,
+            config,
+            undo_history: UndoHistory::new(),
+            skip_next_drop: false,
+            sort_pending: false,
+            keybindings,
+        }
+    }
+
+    pub(crate) fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_is_error = false;
+    }
+
+    pub(crate) fn set_status_error(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_is_error = true;
+    }
+
+    pub(crate) fn tab(&self) -> &TabState {
+        &self.tabs[self.active_tab]
+    }
+
+    pub(crate) fn tab_mut(&mut self) -> &mut TabState {
+        &mut self.tabs[self.active_tab]
+    }
+
+    pub(crate) fn active_panel(&self) -> &FilePanel {
+        self.tab().active_panel()
+    }
+
+    pub(crate) fn active_panel_mut(&mut self) -> &mut FilePanel {
+        self.tab_mut().active_panel_mut()
+    }
+
+    pub(crate) fn inactive_panel(&self) -> &FilePanel {
+        self.tab().inactive_panel()
+    }
+
+    pub(crate) fn inactive_panel_mut(&mut self) -> &mut FilePanel {
+        self.tab_mut().inactive_panel_mut()
+    }
+
+    pub(crate) fn update_preview(&mut self, ctx: &egui::Context) {
+        self.tab_mut().update_preview(ctx);
+    }
+
+    pub(crate) fn clear_all_previews(&mut self) {
+        self.tab_mut().clear_all_previews();
+    }
+
+    pub(crate) fn refresh_both_panels(&mut self) {
+        let tab = &mut self.tabs[self.active_tab];
+        tab.left_panel.refresh();
+        tab.right_panel.refresh();
+    }
+
+    pub(crate) fn remove_paths_both_panels(&mut self, paths: &[PathBuf]) {
+        let tab = &mut self.tabs[self.active_tab];
+        tab.left_panel.remove_paths(paths);
+        tab.right_panel.remove_paths(paths);
+    }
+
+    pub(crate) fn new_tab(&mut self, ctx: &egui::Context) {
+        let current = &self.tabs[self.active_tab];
+        let left_dir = current.left_panel.current_dir.clone();
+        let right_dir = current.right_panel.current_dir.clone();
+
+        let cursor_history: std::collections::HashMap<PathBuf, String> = self.config
+            .cursor_dirs
+            .iter()
+            .map(|(k, v)| (PathBuf::from(k), v.clone()))
+            .collect();
+        let sort_history: std::collections::HashMap<PathBuf, (crate::sort::SortKey, crate::sort::SortOrder)> = self.config
+            .sort_dirs
+            .iter()
+            .filter_map(|(k, v)| {
+                crate::sort::sort_from_string(v).map(|sort| (PathBuf::from(k), sort))
+            })
+            .collect();
+
+        self.tabs.push(TabState::new(left_dir, right_dir, &cursor_history, &sort_history));
+        self.active_tab = self.tabs.len() - 1;
+        self.set_status(format!("Tab {} created", self.tabs.len()));
+        ctx.request_repaint();
+    }
+
+    pub(crate) fn close_tab_at(&mut self, idx: usize) {
+        if self.tabs.len() <= 1 || idx >= self.tabs.len() {
+            return;
+        }
+        self.tabs[idx].stop_media();
+        self.tabs.remove(idx);
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        } else if self.active_tab > idx {
+            self.active_tab -= 1;
+        }
+        self.set_status(format!("Tab closed ({} remaining)", self.tabs.len()));
+    }
+
+    pub(crate) fn switch_to_tab(&mut self, index: usize, ctx: &egui::Context) {
+        if index == self.active_tab || index >= self.tabs.len() {
+            return;
+        }
+        self.tabs[self.active_tab].stop_media();
+        self.active_tab = index;
+        self.update_preview(ctx);
+    }
+
+    pub(crate) fn save_config(&mut self) {
+        // Save state from all tabs
+        for tab in &mut self.tabs {
+            tab.left_panel.save_cursor_position();
+            tab.right_panel.save_cursor_position();
+        }
+
+        // Use active tab for last_left_dir / last_right_dir (backward compat)
+        let tab = &self.tabs[self.active_tab];
         self.config.last_left_dir =
-            Some(self.left_panel.current_dir.to_string_lossy().to_string());
+            Some(tab.left_panel.current_dir.to_string_lossy().to_string());
         self.config.last_right_dir =
-            Some(self.right_panel.current_dir.to_string_lossy().to_string());
-        // Save per-drive last directory
-        for panel_dir in [&self.left_panel.current_dir, &self.right_panel.current_dir] {
-            if let Some(drive) = drive_letter(panel_dir) {
-                self.config.drive_dirs.insert(
-                    drive,
-                    panel_dir.to_string_lossy().to_string(),
-                );
+            Some(tab.right_panel.current_dir.to_string_lossy().to_string());
+
+        // Save per-drive last directory from all tabs
+        for tab in &self.tabs {
+            for panel_dir in [&tab.left_panel.current_dir, &tab.right_panel.current_dir] {
+                if let Some(drive) = drive_letter(panel_dir) {
+                    self.config.drive_dirs.insert(
+                        drive,
+                        panel_dir.to_string_lossy().to_string(),
+                    );
+                }
             }
         }
         // Save per-directory cursor positions (only entries modified this session)
-        for panel in [&self.left_panel, &self.right_panel] {
-            for dir in &panel.cursor_dirty {
-                let dir_str = dir.to_string_lossy().to_string();
-                if let Some(name) = panel.cursor_history.get(dir as &PathBuf) {
-                    self.config.cursor_dirs.insert(dir_str.clone(), name.clone());
+        for tab in &self.tabs {
+            for panel in [&tab.left_panel, &tab.right_panel] {
+                for dir in &panel.cursor_dirty {
+                    let dir_str = dir.to_string_lossy().to_string();
+                    if let Some(name) = panel.cursor_history.get(dir as &PathBuf) {
+                        self.config.cursor_dirs.insert(dir_str.clone(), name.clone());
+                    }
+                    self.config.touch_dir(&dir_str);
                 }
-                self.config.touch_dir(&dir_str);
             }
         }
         // Save per-directory sort state (only entries modified this session)
-        for panel in [&self.left_panel, &self.right_panel] {
-            for dir in &panel.sort_dirty {
-                let dir_str = dir.to_string_lossy().to_string();
-                if let Some(&(key, order)) = panel.sort_history.get(dir) {
-                    self.config.sort_dirs.insert(
-                        dir_str.clone(),
-                        crate::sort::sort_to_string(key, order),
-                    );
+        for tab in &self.tabs {
+            for panel in [&tab.left_panel, &tab.right_panel] {
+                for dir in &panel.sort_dirty {
+                    let dir_str = dir.to_string_lossy().to_string();
+                    if let Some(&(key, order)) = panel.sort_history.get(dir) {
+                        self.config.sort_dirs.insert(
+                            dir_str.clone(),
+                            crate::sort::sort_to_string(key, order),
+                        );
+                    }
+                    self.config.touch_dir(&dir_str);
                 }
-                self.config.touch_dir(&dir_str);
             }
         }
+        // Save tab state
+        self.config.tabs = self.tabs.iter().map(|tab| {
+            crate::config::TabConfig {
+                left_dir: tab.left_panel.current_dir.to_string_lossy().to_string(),
+                right_dir: tab.right_panel.current_dir.to_string_lossy().to_string(),
+            }
+        }).collect();
+        self.config.active_tab = self.active_tab;
         // Trim old directory history entries
         self.config.trim_dir_history();
         // Save window position and size
@@ -399,8 +552,9 @@ impl F2App {
 
         // Hover highlight
         let hovered_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
-        self.left_panel.drop_highlight = hovered_files && is_left_half;
-        self.right_panel.drop_highlight = hovered_files && !is_left_half;
+        let tab = &mut self.tabs[self.active_tab];
+        tab.left_panel.drop_highlight = hovered_files && is_left_half;
+        tab.right_panel.drop_highlight = hovered_files && !is_left_half;
 
         // Process dropped files
         let dropped_files: Vec<std::path::PathBuf> = ctx.input(|i| {
@@ -420,10 +574,11 @@ impl F2App {
             return;
         }
 
+        let tab = &mut self.tabs[self.active_tab];
         let dest_panel = if is_left_half {
-            &mut self.left_panel
+            &mut tab.left_panel
         } else {
-            &mut self.right_panel
+            &mut tab.right_panel
         };
         let dest = dest_panel.current_dir.clone();
 
@@ -470,18 +625,24 @@ impl eframe::App for F2App {
         crate::keyboard::handle_keyboard(self, ctx);
 
         // Check for async directory loading completion
-        let left_loaded = self.left_panel.check_loading_complete();
-        let right_loaded = self.right_panel.check_loading_complete();
-        if left_loaded || right_loaded {
-            self.save_config();
-            self.update_preview(ctx);
+        {
+            let tab = &mut self.tabs[self.active_tab];
+            let left_loaded = tab.left_panel.check_loading_complete();
+            let right_loaded = tab.right_panel.check_loading_complete();
+            if left_loaded || right_loaded {
+                self.save_config();
+                self.update_preview(ctx);
+            }
         }
 
         // Auto-refresh directories when filesystem changes
-        let left_refreshed = self.left_panel.check_auto_refresh();
-        let right_refreshed = self.right_panel.check_auto_refresh();
-        if left_refreshed || right_refreshed {
-            self.update_preview(ctx);
+        {
+            let tab = &mut self.tabs[self.active_tab];
+            let left_refreshed = tab.left_panel.check_auto_refresh();
+            let right_refreshed = tab.right_panel.check_auto_refresh();
+            if left_refreshed || right_refreshed {
+                self.update_preview(ctx);
+            }
         }
 
         // Check deferred preview update requests from panel UI (sort click, filter Enter)
@@ -491,9 +652,12 @@ impl eframe::App for F2App {
         }
 
         // Poll background image loading
-        if self.preview_mode {
-            if let Some(preview) = self.image_cache.poll_loaded(ctx) {
-                self.image_preview = Some(preview);
+        {
+            let tab = &mut self.tabs[self.active_tab];
+            if tab.preview_mode {
+                if let Some(preview) = tab.image_cache.poll_loaded(ctx) {
+                    tab.image_preview = Some(preview);
+                }
             }
         }
 
@@ -584,16 +748,65 @@ impl eframe::App for F2App {
         // Handle external file drops
         self.handle_file_drop(ctx);
 
+        // Tab bar (only shown when multiple tabs exist)
+        if self.tabs.len() > 1 {
+            egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let mut switch_to = None;
+                    let mut close_idx = None;
+                    for i in 0..self.tabs.len() {
+                        let is_active = i == self.active_tab;
+                        let tab = &self.tabs[i];
+                        let label = tab.active_panel()
+                            .current_dir
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| tab.active_panel().current_dir.to_string_lossy().to_string());
+                        let tab_text = format!(" {} ", label);
+
+                        let response = ui.selectable_label(is_active, &tab_text);
+                        if response.clicked() && !is_active {
+                            switch_to = Some(i);
+                        }
+                        // Middle-click to close tab
+                        if response.middle_clicked() {
+                            close_idx = Some(i);
+                        }
+                        // Right-click close button via secondary click
+                        response.context_menu(|ui| {
+                            if ui.button("Close tab").clicked() {
+                                close_idx = Some(i);
+                                ui.close();
+                            }
+                        });
+                    }
+
+                    // "+" button for new tab
+                    if ui.small_button("+").clicked() {
+                        self.new_tab(ctx);
+                    }
+
+                    if let Some(idx) = switch_to {
+                        self.switch_to_tab(idx, ctx);
+                    }
+                    if let Some(idx) = close_idx {
+                        self.close_tab_at(idx);
+                    }
+                });
+            });
+        }
+
         // Central panel: two file panels side by side
         egui::CentralPanel::default().show(ctx, |ui| {
-            let active = self.active;
-            let left_panel = &mut self.left_panel;
-            let right_panel = &mut self.right_panel;
-            let text_preview = &self.text_preview;
-            let archive_preview = &self.archive_preview;
-            let image_preview = &self.image_preview;
-            let audio_preview = &mut self.audio_preview;
-            let video_preview = &mut self.video_preview;
+            let tab = &mut self.tabs[self.active_tab];
+            let active = tab.active;
+            let left_panel = &mut tab.left_panel;
+            let right_panel = &mut tab.right_panel;
+            let text_preview = &tab.text_preview;
+            let archive_preview = &tab.archive_preview;
+            let image_preview = &tab.image_preview;
+            let audio_preview = &mut tab.audio_preview;
+            let video_preview = &mut tab.video_preview;
             let left_is_inactive = active == ActivePanel::Right;
             let right_is_inactive = active == ActivePanel::Left;
             let has_preview = text_preview.is_some() || archive_preview.is_some() || image_preview.is_some() || audio_preview.is_some() || video_preview.is_some();
@@ -669,13 +882,14 @@ impl eframe::App for F2App {
             });
 
             // Click on inactive panel → switch active panel
+            let mut switch_to = None;
             if left_panel.clicked {
                 left_panel.clicked = false;
-                self.active = ActivePanel::Left;
+                switch_to = Some(ActivePanel::Left);
             }
             if right_panel.clicked {
                 right_panel.clicked = false;
-                self.active = ActivePanel::Right;
+                switch_to = Some(ActivePanel::Right);
             }
 
             // Handle outbound drag (App → External)
@@ -696,10 +910,17 @@ impl eframe::App for F2App {
                     }
                 }
             }
+
+            if let Some(panel) = switch_to {
+                self.tabs[self.active_tab].active = panel;
+            }
         });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        for tab in &mut self.tabs {
+            tab.stop_media();
+        }
         self.save_config();
     }
 }

@@ -62,6 +62,11 @@ pub enum Action {
     FontSizeDown,
     Settings,
     CommandMode,
+    // Tabs
+    NewTab,
+    CloseTab,
+    PrevTab,
+    NextTab,
     // Sort
     SortMode,
     SortByName,
@@ -120,6 +125,10 @@ pub const ACTION_DISPLAY_ORDER: &[Action] = &[
     Action::FontSizeDown,
     Action::Settings,
     Action::Quit,
+    Action::NewTab,
+    Action::CloseTab,
+    Action::PrevTab,
+    Action::NextTab,
     Action::ShowHelp,
     // Sort sub-keys (not shown in main help, but configurable)
     Action::SortByName,
@@ -179,6 +188,10 @@ impl Action {
             Action::FontSizeDown => "Font size down",
             Action::Settings => "Settings",
             Action::CommandMode => "Command mode",
+            Action::NewTab => "New tab",
+            Action::CloseTab => "Close tab",
+            Action::PrevTab => "Previous tab",
+            Action::NextTab => "Next tab",
             Action::SortMode => "Sort mode (then n/e/s/d)",
             Action::SortByName => "Sort by name",
             Action::SortByExtension => "Sort by extension",
@@ -538,6 +551,15 @@ impl KeyBindings {
             vec![kb("comma", true, false, false)], // Ctrl+,
         );
         b.insert(Action::CommandMode, vec![kb_text(":")]);
+
+        // Tabs
+        b.insert(
+            Action::NewTab,
+            vec![kb("t", false, false, false)],
+        );
+        b.insert(Action::CloseTab, vec![kb("w", false, false, false)]);
+        b.insert(Action::PrevTab, vec![kb_text("1")]);
+        b.insert(Action::NextTab, vec![kb_text("2")]);
 
         // Sort
         b.insert(Action::SortMode, vec![kb("s", false, false, false)]);

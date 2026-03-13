@@ -310,8 +310,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     &progress_dialog.op_kind,
                     OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
                 ) {
-                    app.left_panel.remove_paths(&succeeded_paths);
-                    app.right_panel.remove_paths(&succeeded_paths);
+                    app.remove_paths_both_panels(&succeeded_paths);
                 }
 
                 if !succeeded_paths.is_empty() {
@@ -379,8 +378,7 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     }
                 }
 
-                app.left_panel.refresh();
-                app.right_panel.refresh();
+                app.refresh_both_panels();
                 app.active_panel_mut().deselect_all();
                 app.update_preview(ctx);
             }
