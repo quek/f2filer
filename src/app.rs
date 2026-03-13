@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -226,6 +227,7 @@ pub struct F2App {
     skip_next_drop: bool,
     pub(crate) sort_pending: bool,
     pub(crate) keybindings: KeyBindings,
+    operation_log: VecDeque<String>,
 }
 
 impl F2App {
@@ -300,6 +302,7 @@ impl F2App {
             skip_next_drop: false,
             sort_pending: false,
             keybindings,
+            operation_log: VecDeque::new(),
         }
     }
 
@@ -531,10 +534,11 @@ impl F2App {
             repaint_ctx.request_repaint();
         });
 
-        self.dialog.progress = Some(ProgressDialog {
+        self.dialog.progress.push(ProgressDialog {
             handle: progress,
             op_kind,
             source_tab: self.active_tab,
+            log_synced: 0,
         });
     }
 
@@ -658,27 +662,46 @@ impl eframe::App for F2App {
         }
 
         // Handle dialog results
-        // Hide progress dialog when viewing a different tab; just poll for completion
-        let progress_hidden = self.dialog.progress.as_ref()
-            .is_some_and(|p| p.source_tab != self.active_tab);
-        let stashed = if progress_hidden { self.dialog.progress.take() } else { None };
-
-        let mut result = show_dialogs(ctx, &mut self.dialog);
-
-        if let Some(progress) = stashed {
-            let finished = progress.handle.state.lock().finished;
-            if finished {
-                result = DialogResult::ProgressFinished;
-            } else {
-                ctx.request_repaint();
-            }
-            self.dialog.progress = Some(progress);
-        }
-
+        let result = show_dialogs(ctx, &mut self.dialog);
         crate::dialog_handler::handle_dialog_result(self, ctx, result);
 
+        // Sync log entries from all progress handles
+        const MAX_LOG_ENTRIES: usize = 10_000;
+        for prog in &mut self.dialog.progress {
+            let s = prog.handle.state.lock();
+            let sync_idx = prog.log_synced.min(s.log_entries.len());
+            for entry in &s.log_entries[sync_idx..] {
+                if self.operation_log.len() >= MAX_LOG_ENTRIES {
+                    self.operation_log.pop_front();
+                }
+                self.operation_log.push_back(entry.clone());
+            }
+            prog.log_synced = s.log_entries.len();
+        }
 
-        // Bottom panel: status bar + command line
+        // Handle finished progress operations (drain completed ones)
+        while let Some(idx) = self
+            .dialog
+            .progress
+            .iter()
+            .position(|p| p.handle.state.lock().finished)
+        {
+            // Flush remaining log entries before removing
+            {
+                let s = self.dialog.progress[idx].handle.state.lock();
+                let sync_idx = self.dialog.progress[idx].log_synced.min(s.log_entries.len());
+                for entry in &s.log_entries[sync_idx..] {
+                    if self.operation_log.len() >= MAX_LOG_ENTRIES {
+                        self.operation_log.pop_front();
+                    }
+                    self.operation_log.push_back(entry.clone());
+                }
+            }
+            let finished = self.dialog.progress.remove(idx);
+            crate::dialog_handler::handle_progress_finished(self, ctx, finished);
+        }
+
+        // Bottom panel: status bar + command line (drawn first = bottommost)
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             // Command line
             if self.command_mode {
@@ -756,6 +779,77 @@ impl eframe::App for F2App {
                 });
             });
         });
+
+        // Operation log panel (above status bar, shown when log is non-empty or progress active)
+        let show_log = !self.operation_log.is_empty() || !self.dialog.progress.is_empty();
+        if show_log {
+            let line_height = ctx.style().text_styles[&egui::TextStyle::Body].size + 4.0;
+            egui::TopBottomPanel::bottom("operation_log")
+                .resizable(true)
+                .default_height(line_height * 5.0)
+                .height_range(line_height * 2.0..=line_height * 30.0)
+                .show(ctx, |ui| {
+                    // Progress bars (fixed at top, outside scroll)
+                    for progress in &self.dialog.progress {
+                        let s = progress.handle.state.lock();
+                        let fraction = if s.total_bytes > 0 {
+                            s.completed_bytes as f32 / s.total_bytes as f32
+                        } else if s.total > 0 {
+                            s.completed as f32 / s.total as f32
+                        } else {
+                            0.0
+                        };
+                        let size_text = if s.total_bytes > 0 {
+                            format!(
+                                "{} / {}",
+                                file_item::format_size(s.completed_bytes),
+                                file_item::format_size(s.total_bytes),
+                            )
+                        } else {
+                            format!("{} / {}", s.completed, s.total)
+                        };
+                        let op_label = s.op_label.as_str();
+                        ui.horizontal(|ui| {
+                            ui.label(op_label);
+                            ui.add(
+                                egui::ProgressBar::new(fraction)
+                                    .desired_width(150.0)
+                                    .show_percentage(),
+                            );
+                            ui.label(size_text);
+                            if ui.small_button("Cancel").clicked() {
+                                progress.handle.cancel();
+                            }
+                        });
+                    }
+                    if !self.dialog.progress.is_empty() {
+                        ui.separator();
+                        ctx.request_repaint();
+                    }
+
+                    // Scrollable log (virtualized)
+                    let log_len = self.operation_log.len();
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .show_rows(ui, line_height, log_len, |ui, row_range| {
+                            for row in row_range {
+                                if let Some(entry) = self.operation_log.get(row) {
+                                    ui.label(entry.as_str());
+                                }
+                            }
+                        });
+                });
+
+            // Escape key cancellation (cancel all active operations)
+            if !self.dialog.progress.is_empty()
+                && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                for p in &self.dialog.progress {
+                    p.handle.cancel();
+                }
+            }
+        }
 
         // Handle external file drops
         self.handle_file_drop(ctx);

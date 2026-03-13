@@ -330,6 +330,7 @@ pub struct ProgressState {
     pub result_message: String,
     pub succeeded_paths: Vec<PathBuf>,
     pub result_path: Option<PathBuf>,
+    pub log_entries: Vec<String>,
 }
 
 impl ProgressHandle {
@@ -348,6 +349,7 @@ impl ProgressHandle {
                 result_message: String::new(),
                 succeeded_paths: Vec::new(),
                 result_path: None,
+                log_entries: Vec::new(),
             })),
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }
@@ -359,6 +361,10 @@ impl ProgressHandle {
 
     pub fn cancel(&self) {
         self.cancel_flag.store(true, Ordering::Relaxed);
+    }
+
+    fn log(&self, entry: String) {
+        self.state.lock().log_entries.push(entry);
     }
 
     fn update(&self, current_file: &str, completed: usize) {
@@ -378,15 +384,18 @@ impl ProgressHandle {
     }
 
     fn finish(&self, message: String, succeeded: Vec<PathBuf>, error: Option<String>, result_path: Option<PathBuf>) {
-        {
-            let mut s = self.state.lock();
-            s.finished = true;
-            s.cancelled = self.is_cancelled();
-            s.result_message = message;
-            s.succeeded_paths = succeeded;
-            s.error = error;
-            s.result_path = result_path;
+        let mut s = self.state.lock();
+        // Add summary log unless it's a single-item batch op (which already has its own per-file log entry)
+        let skip_summary = s.total == 1 && error.is_none() && !s.log_entries.is_empty();
+        if !skip_summary {
+            s.log_entries.push(message.clone());
         }
+        s.finished = true;
+        s.cancelled = self.is_cancelled();
+        s.result_message = message;
+        s.succeeded_paths = succeeded;
+        s.error = error;
+        s.result_path = result_path;
     }
 }
 
@@ -409,8 +418,14 @@ fn run_batch_with_progress<F>(
         progress.update(&name, i);
 
         match op(path) {
-            Ok(()) => succeeded.push(path.clone()),
-            Err(e) => errors.push(e.to_string()),
+            Ok(()) => {
+                succeeded.push(path.clone());
+                progress.log(format!("{} {}", verb, name));
+            }
+            Err(e) => {
+                progress.log(format!("Error: {} - {}", name, e));
+                errors.push(e.to_string());
+            }
         }
         progress.update(&name, i + 1);
     }
@@ -587,12 +602,14 @@ pub fn copy_batch_with_progress(
         match result {
             Ok(()) => {
                 succeeded.push(src.clone());
+                progress.log(format!("Copied {}", file_name.to_string_lossy()));
                 progress.update(&file_name.to_string_lossy(), i + 1);
             }
             Err(e) => {
                 if progress.is_cancelled() {
                     break;
                 }
+                progress.log(format!("Error: {} - {}", file_name.to_string_lossy(), e));
                 errors.push(e.to_string());
             }
         }

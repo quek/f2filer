@@ -287,115 +287,119 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                 .unwrap_or_else(|| "(Default)".to_string());
             app.set_status(format!("Font: {}", name));
         }
-        DialogResult::ProgressFinished => {
-            if let Some(progress_dialog) = app.dialog.progress.take() {
-                let (result_message, succeeded_paths, result_path, has_error) = {
-                    let s = progress_dialog.handle.state.lock();
-                    (
-                        s.result_message.clone(),
-                        s.succeeded_paths.clone(),
-                        s.result_path.clone(),
-                        s.error.is_some(),
-                    )
-                };
+        _ => {}
+    }
+}
 
-                if has_error {
-                    app.set_status_error(result_message);
-                } else {
-                    app.set_status(result_message);
+/// Handle a single finished progress operation (extracted from Vec<ProgressDialog>).
+pub(crate) fn handle_progress_finished(
+    app: &mut F2App,
+    ctx: &egui::Context,
+    progress_dialog: ProgressDialog,
+) {
+    let (result_message, succeeded_paths, result_path, has_error) = {
+        let s = progress_dialog.handle.state.lock();
+        (
+            s.result_message.clone(),
+            s.succeeded_paths.clone(),
+            s.result_path.clone(),
+            s.error.is_some(),
+        )
+    };
+
+    if has_error {
+        app.set_status_error(result_message);
+    } else {
+        app.set_status(result_message);
+    }
+
+    // Determine which tab to refresh (source tab, or fallback to active)
+    let target_tab = if progress_dialog.source_tab < app.tabs.len() {
+        progress_dialog.source_tab
+    } else {
+        app.active_tab
+    };
+
+    // For delete/move: remove operated files from recursive search results
+    if matches!(
+        &progress_dialog.op_kind,
+        OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
+    ) {
+        let tab = &mut app.tabs[target_tab];
+        tab.left_panel.remove_paths(&succeeded_paths);
+        tab.right_panel.remove_paths(&succeeded_paths);
+    }
+
+    if !succeeded_paths.is_empty() {
+        match &progress_dialog.op_kind {
+            OpKind::Copy { dest_dir, .. } => {
+                let created: Vec<PathBuf> = succeeded_paths
+                    .iter()
+                    .filter_map(|s| s.file_name().map(|n| dest_dir.join(n)))
+                    .collect();
+                app.undo_history.push(FileOperation::Copy {
+                    sources: succeeded_paths,
+                    dest_dir: dest_dir.clone(),
+                    created,
+                });
+            }
+            OpKind::Move { dest_dir, .. } => {
+                let moves: Vec<(PathBuf, PathBuf)> = succeeded_paths
+                    .iter()
+                    .filter_map(|s| {
+                        s.file_name().map(|n| (s.clone(), dest_dir.join(n)))
+                    })
+                    .collect();
+                app.undo_history.push(FileOperation::Move { moves });
+            }
+            OpKind::Delete { .. } => {
+                app.undo_history.push(FileOperation::Delete {
+                    paths: succeeded_paths,
+                });
+            }
+            OpKind::DeletePermanent { .. } => {
+                // No undo for permanent delete
+            }
+            OpKind::ZipCompress { .. } => {
+                if let Some(zip_path) = result_path {
+                    app.undo_history.push(FileOperation::Compress {
+                        sources: succeeded_paths,
+                        zip_path,
+                    });
                 }
-
-                // Determine which tab to refresh (source tab, or fallback to active)
-                let target_tab = if progress_dialog.source_tab < app.tabs.len() {
-                    progress_dialog.source_tab
-                } else {
-                    app.active_tab
-                };
-
-                // For delete/move: remove operated files from recursive search results
-                if matches!(
-                    &progress_dialog.op_kind,
-                    OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
-                ) {
-                    let tab = &mut app.tabs[target_tab];
-                    tab.left_panel.remove_paths(&succeeded_paths);
-                    tab.right_panel.remove_paths(&succeeded_paths);
+            }
+            OpKind::ZipDecompress { zip_path, .. } => {
+                if let Some(extracted_dir) = result_path {
+                    app.undo_history.push(FileOperation::Decompress {
+                        zip_path: zip_path.clone(),
+                        extracted_dir,
+                    });
                 }
-
-                if !succeeded_paths.is_empty() {
-                    match &progress_dialog.op_kind {
-                        OpKind::Copy { dest_dir, .. } => {
-                            let created: Vec<PathBuf> = succeeded_paths
-                                .iter()
-                                .filter_map(|s| s.file_name().map(|n| dest_dir.join(n)))
-                                .collect();
-                            app.undo_history.push(FileOperation::Copy {
-                                sources: succeeded_paths,
-                                dest_dir: dest_dir.clone(),
-                                created,
-                            });
-                        }
-                        OpKind::Move { dest_dir, .. } => {
-                            let moves: Vec<(PathBuf, PathBuf)> = succeeded_paths
-                                .iter()
-                                .filter_map(|s| {
-                                    s.file_name().map(|n| (s.clone(), dest_dir.join(n)))
-                                })
-                                .collect();
-                            app.undo_history.push(FileOperation::Move { moves });
-                        }
-                        OpKind::Delete { .. } => {
-                            app.undo_history.push(FileOperation::Delete {
-                                paths: succeeded_paths,
-                            });
-                        }
-                        OpKind::DeletePermanent { .. } => {
-                            // No undo for permanent delete
-                        }
-                        OpKind::ZipCompress { .. } => {
-                            if let Some(zip_path) = result_path {
-                                app.undo_history.push(FileOperation::Compress {
-                                    sources: succeeded_paths,
-                                    zip_path,
-                                });
-                            }
-                        }
-                        OpKind::ZipDecompress { zip_path, .. } => {
-                            if let Some(extracted_dir) = result_path {
-                                app.undo_history.push(FileOperation::Decompress {
-                                    zip_path: zip_path.clone(),
-                                    extracted_dir,
-                                });
-                            }
-                        }
-                        OpKind::TarDecompress { tar_path, .. } => {
-                            if let Some(extracted_dir) = result_path {
-                                app.undo_history.push(FileOperation::Decompress {
-                                    zip_path: tar_path.clone(),
-                                    extracted_dir,
-                                });
-                            }
-                        }
-                        OpKind::StreamDecompress { path, .. } => {
-                            if let Some(output_file) = result_path {
-                                app.undo_history.push(FileOperation::Decompress {
-                                    zip_path: path.clone(),
-                                    extracted_dir: output_file,
-                                });
-                            }
-                        }
-                    }
+            }
+            OpKind::TarDecompress { tar_path, .. } => {
+                if let Some(extracted_dir) = result_path {
+                    app.undo_history.push(FileOperation::Decompress {
+                        zip_path: tar_path.clone(),
+                        extracted_dir,
+                    });
                 }
-
-                let tab = &mut app.tabs[target_tab];
-                tab.left_panel.refresh();
-                tab.right_panel.refresh();
-                tab.active_panel_mut().deselect_all();
-                if target_tab == app.active_tab {
-                    app.update_preview(ctx);
+            }
+            OpKind::StreamDecompress { path, .. } => {
+                if let Some(output_file) = result_path {
+                    app.undo_history.push(FileOperation::Decompress {
+                        zip_path: path.clone(),
+                        extracted_dir: output_file,
+                    });
                 }
             }
         }
-        _ => {}
+    }
+
+    let tab = &mut app.tabs[target_tab];
+    tab.left_panel.refresh();
+    tab.right_panel.refresh();
+    tab.active_panel_mut().deselect_all();
+    if target_tab == app.active_tab {
+        app.update_preview(ctx);
     }
 }

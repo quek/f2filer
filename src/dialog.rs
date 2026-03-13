@@ -1,7 +1,6 @@
 use eframe::egui;
 
 use crate::config::RegisteredDir;
-use crate::file_item::format_size;
 use crate::file_ops;
 use crate::keybind::{Action, KeyBinding, KeyBindings, ACTION_DISPLAY_ORDER};
 
@@ -12,7 +11,7 @@ pub struct DialogState {
     pub message: Option<MessageDialog>,
     pub drive: Option<DriveDialog>,
     pub registered_dir: Option<RegisteredDirDialog>,
-    pub progress: Option<ProgressDialog>,
+    pub progress: Vec<ProgressDialog>,
     pub settings: Option<SettingsDialog>,
     pub history: Option<HistoryDialog>,
 }
@@ -24,21 +23,8 @@ impl DialogState {
             || self.message.is_some()
             || self.drive.is_some()
             || self.registered_dir.is_some()
-            || self.progress.is_some()
             || self.settings.is_some()
             || self.history.is_some()
-    }
-
-    /// Returns true if only the progress dialog is open (no other dialogs).
-    pub fn is_only_progress(&self) -> bool {
-        self.progress.is_some()
-            && self.confirm.is_none()
-            && self.input.is_none()
-            && self.message.is_none()
-            && self.drive.is_none()
-            && self.registered_dir.is_none()
-            && self.settings.is_none()
-            && self.history.is_none()
     }
 }
 
@@ -58,6 +44,8 @@ pub struct ProgressDialog {
     pub handle: file_ops::ProgressHandle,
     pub op_kind: OpKind,
     pub source_tab: usize,
+    /// Number of log entries already synced to operation_log
+    pub log_synced: usize,
 }
 
 pub struct ConfirmDialog {
@@ -225,7 +213,6 @@ pub enum DialogResult {
     KeybindingBatchChanged(Vec<(Action, Vec<KeyBinding>)>),
     KeybindingReset(Action),
     HistorySelected(usize),
-    ProgressFinished,
     Closed,
 }
 
@@ -249,9 +236,6 @@ pub fn show_dialogs(ctx: &egui::Context, state: &mut DialogState) -> DialogResul
     }
     if let Some(dialog) = &mut state.history {
         result = show_history_dialog(ctx, dialog);
-    }
-    if let Some(progress) = &state.progress {
-        result = show_progress_dialog(ctx, progress);
     }
     if let Some(dialog) = &mut state.settings {
         result = show_settings_main(ctx, dialog);
@@ -618,66 +602,6 @@ fn show_history_dialog(ctx: &egui::Context, dialog: &mut HistoryDialog) -> Dialo
     result
 }
 
-fn show_progress_dialog(ctx: &egui::Context, progress: &ProgressDialog) -> DialogResult {
-    let (op_label, current_file, completed, total, completed_bytes, total_bytes, finished) = {
-        let s = progress.handle.state.lock();
-        (
-            s.op_label.clone(),
-            s.current_file.clone(),
-            s.completed,
-            s.total,
-            s.completed_bytes,
-            s.total_bytes,
-            s.finished,
-        )
-    };
-
-    if finished {
-        return DialogResult::ProgressFinished;
-    }
-
-    egui::Window::new(&op_label)
-        .collapsible(false)
-        .resizable(true)
-        .constrain(true)
-        .default_pos(ctx.content_rect().center())
-        .pivot(egui::Align2::CENTER_CENTER)
-        .show(ctx, |ui| {
-            ui.set_min_width(300.0);
-            if total_bytes > 0 {
-                ui.label(format!(
-                    "{} / {}",
-                    format_size(completed_bytes),
-                    format_size(total_bytes),
-                ));
-            } else {
-                ui.label(format!("{} / {}", completed, total));
-            }
-            if !current_file.is_empty() {
-                ui.label(&current_file);
-            }
-            let fraction = if total_bytes > 0 {
-                completed_bytes as f32 / total_bytes as f32
-            } else if total > 0 {
-                completed as f32 / total as f32
-            } else {
-                0.0
-            };
-            ui.add(egui::ProgressBar::new(fraction).show_percentage());
-            ui.add_space(8.0);
-            if ui.button("Cancel (Esc)").clicked() {
-                progress.handle.cancel();
-            }
-        });
-
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        progress.handle.cancel();
-    }
-
-    ctx.request_repaint();
-    DialogResult::None
-}
-
 fn show_settings_main(ctx: &egui::Context, dialog: &mut SettingsDialog) -> DialogResult {
     let mut result = DialogResult::None;
     let mut open = true;
@@ -772,7 +696,6 @@ fn cleanup_dialog_state(state: &mut DialogState, result: &DialogResult) {
         DialogResult::KeybindingChanged(_, _)
         | DialogResult::KeybindingBatchChanged(_)
         | DialogResult::KeybindingReset(_) => {}
-        DialogResult::ProgressFinished => {}
         DialogResult::None => {}
     }
 }

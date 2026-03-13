@@ -45,8 +45,7 @@ fn detect_ctrl_cv() -> (bool, bool) {
 
 pub(crate) fn handle_keyboard(app: &mut F2App, ctx: &egui::Context) {
     // Don't handle keys when dialog is open or command mode
-    // Exception: progress-only dialog allows keyboard (for tab switching etc.)
-    if app.dialog.is_open() && !app.dialog.is_only_progress() {
+    if app.dialog.is_open() {
         return;
     }
     if app.command_mode {
