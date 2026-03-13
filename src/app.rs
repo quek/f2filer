@@ -351,11 +351,6 @@ impl F2App {
         tab.right_panel.refresh();
     }
 
-    pub(crate) fn remove_paths_both_panels(&mut self, paths: &[PathBuf]) {
-        let tab = &mut self.tabs[self.active_tab];
-        tab.left_panel.remove_paths(paths);
-        tab.right_panel.remove_paths(paths);
-    }
 
     pub(crate) fn new_tab(&mut self, ctx: &egui::Context) {
         let current = &self.tabs[self.active_tab];
@@ -539,6 +534,7 @@ impl F2App {
         self.dialog.progress = Some(ProgressDialog {
             handle: progress,
             op_kind,
+            source_tab: self.active_tab,
         });
     }
 
@@ -662,7 +658,23 @@ impl eframe::App for F2App {
         }
 
         // Handle dialog results
-        let result = show_dialogs(ctx, &mut self.dialog);
+        // Hide progress dialog when viewing a different tab; just poll for completion
+        let progress_hidden = self.dialog.progress.as_ref()
+            .is_some_and(|p| p.source_tab != self.active_tab);
+        let stashed = if progress_hidden { self.dialog.progress.take() } else { None };
+
+        let mut result = show_dialogs(ctx, &mut self.dialog);
+
+        if let Some(progress) = stashed {
+            let finished = progress.handle.state.lock().finished;
+            if finished {
+                result = DialogResult::ProgressFinished;
+            } else {
+                ctx.request_repaint();
+            }
+            self.dialog.progress = Some(progress);
+        }
+
         crate::dialog_handler::handle_dialog_result(self, ctx, result);
 
 

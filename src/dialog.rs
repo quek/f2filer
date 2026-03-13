@@ -28,6 +28,18 @@ impl DialogState {
             || self.settings.is_some()
             || self.history.is_some()
     }
+
+    /// Returns true if only the progress dialog is open (no other dialogs).
+    pub fn is_only_progress(&self) -> bool {
+        self.progress.is_some()
+            && self.confirm.is_none()
+            && self.input.is_none()
+            && self.message.is_none()
+            && self.drive.is_none()
+            && self.registered_dir.is_none()
+            && self.settings.is_none()
+            && self.history.is_none()
+    }
 }
 
 #[derive(Clone)]
@@ -45,6 +57,7 @@ pub enum OpKind {
 pub struct ProgressDialog {
     pub handle: file_ops::ProgressHandle,
     pub op_kind: OpKind,
+    pub source_tab: usize,
 }
 
 pub struct ConfirmDialog {

@@ -305,12 +305,21 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     app.set_status(result_message);
                 }
 
+                // Determine which tab to refresh (source tab, or fallback to active)
+                let target_tab = if progress_dialog.source_tab < app.tabs.len() {
+                    progress_dialog.source_tab
+                } else {
+                    app.active_tab
+                };
+
                 // For delete/move: remove operated files from recursive search results
                 if matches!(
                     &progress_dialog.op_kind,
                     OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
                 ) {
-                    app.remove_paths_both_panels(&succeeded_paths);
+                    let tab = &mut app.tabs[target_tab];
+                    tab.left_panel.remove_paths(&succeeded_paths);
+                    tab.right_panel.remove_paths(&succeeded_paths);
                 }
 
                 if !succeeded_paths.is_empty() {
@@ -378,9 +387,13 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     }
                 }
 
-                app.refresh_both_panels();
-                app.active_panel_mut().deselect_all();
-                app.update_preview(ctx);
+                let tab = &mut app.tabs[target_tab];
+                tab.left_panel.refresh();
+                tab.right_panel.refresh();
+                tab.active_panel_mut().deselect_all();
+                if target_tab == app.active_tab {
+                    app.update_preview(ctx);
+                }
             }
         }
         _ => {}
