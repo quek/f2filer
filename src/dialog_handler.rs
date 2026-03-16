@@ -73,6 +73,32 @@ pub(crate) fn handle_dialog_result(app: &mut F2App, ctx: &egui::Context, result:
                     },
                 );
             }
+            ConfirmAction::ElevatedCopy { sources, dest_dir, overwrite } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::ElevatedCopy {
+                        sources,
+                        dest_dir,
+                        overwrite,
+                    },
+                );
+            }
+            ConfirmAction::ElevatedMove { sources, dest_dir, overwrite } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::ElevatedMove {
+                        sources,
+                        dest_dir,
+                        overwrite,
+                    },
+                );
+            }
+            ConfirmAction::ElevatedDelete { paths } => {
+                app.start_background_op(
+                    ctx,
+                    OpKind::ElevatedDelete { paths },
+                );
+            }
         },
         DialogResult::InputOk(value, action) => {
             if value.is_empty() {
@@ -297,20 +323,21 @@ pub(crate) fn handle_progress_finished(
     ctx: &egui::Context,
     progress_dialog: ProgressDialog,
 ) {
-    let (result_message, succeeded_paths, result_path, has_error) = {
+    let (result_message, succeeded_paths, result_path, has_error, elevation_sources) = {
         let s = progress_dialog.handle.state.lock();
         (
             s.result_message.clone(),
             s.succeeded_paths.clone(),
             s.result_path.clone(),
             s.error.is_some(),
+            s.elevation_sources.clone(),
         )
     };
 
     if has_error {
-        app.set_status_error(result_message);
-    } else {
-        app.set_status(result_message);
+        app.set_status_error(result_message.clone());
+    } else if elevation_sources.is_empty() {
+        app.set_status(result_message.clone());
     }
 
     // Determine which tab to refresh (source tab, or fallback to active)
@@ -323,7 +350,7 @@ pub(crate) fn handle_progress_finished(
     // For delete/move: remove operated files from recursive search results
     if matches!(
         &progress_dialog.op_kind,
-        OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. }
+        OpKind::Delete { .. } | OpKind::DeletePermanent { .. } | OpKind::Move { .. } | OpKind::ElevatedMove { .. } | OpKind::ElevatedDelete { .. }
     ) {
         let tab = &mut app.tabs[target_tab];
         tab.left_panel.remove_paths(&succeeded_paths);
@@ -392,6 +419,29 @@ pub(crate) fn handle_progress_finished(
                     });
                 }
             }
+            OpKind::ElevatedCopy { dest_dir, .. } => {
+                let created: Vec<PathBuf> = succeeded_paths
+                    .iter()
+                    .filter_map(|s| s.file_name().map(|n| dest_dir.join(n)))
+                    .collect();
+                app.undo_history.push(FileOperation::Copy {
+                    sources: succeeded_paths,
+                    dest_dir: dest_dir.clone(),
+                    created,
+                });
+            }
+            OpKind::ElevatedMove { dest_dir, .. } => {
+                let moves: Vec<(PathBuf, PathBuf)> = succeeded_paths
+                    .iter()
+                    .filter_map(|s| {
+                        s.file_name().map(|n| (s.clone(), dest_dir.join(n)))
+                    })
+                    .collect();
+                app.undo_history.push(FileOperation::Move { moves });
+            }
+            OpKind::ElevatedDelete { .. } => {
+                // No undo for elevated delete (permanent)
+            }
         }
     }
 
@@ -401,5 +451,48 @@ pub(crate) fn handle_progress_finished(
     tab.active_panel_mut().deselect_all();
     if target_tab == app.active_tab {
         app.update_preview(ctx);
+    }
+
+    // If there are items that failed due to PermissionDenied, offer elevation retry
+    if !elevation_sources.is_empty() {
+        let names: Vec<String> = elevation_sources.iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+        let list = crate::keyboard::format_name_list(&names);
+        let (action, verb) = match &progress_dialog.op_kind {
+            OpKind::Copy { dest_dir, overwrite, .. } | OpKind::Move { dest_dir, overwrite, .. } => {
+                let is_move = matches!(&progress_dialog.op_kind, OpKind::Move { .. });
+                let action = if is_move {
+                    ConfirmAction::ElevatedMove {
+                        sources: elevation_sources,
+                        dest_dir: dest_dir.clone(),
+                        overwrite: *overwrite,
+                    }
+                } else {
+                    ConfirmAction::ElevatedCopy {
+                        sources: elevation_sources,
+                        dest_dir: dest_dir.clone(),
+                        overwrite: *overwrite,
+                    }
+                };
+                let verb = if is_move { "移動" } else { "コピー" };
+                (action, verb)
+            }
+            OpKind::Delete { .. } | OpKind::DeletePermanent { .. } => {
+                let action = ConfirmAction::ElevatedDelete {
+                    paths: elevation_sources,
+                };
+                (action, "削除")
+            }
+            _ => return,
+        };
+        app.dialog.confirm = Some(ConfirmDialog {
+            title: "管理者権限が必要です".to_string(),
+            message: format!(
+                "以下のファイルの{}にはアクセス権限が必要です:\n{}\n\n管理者として再試行しますか？",
+                verb, list
+            ),
+            action,
+        });
     }
 }

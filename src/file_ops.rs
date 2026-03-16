@@ -22,6 +22,21 @@ impl std::fmt::Display for FileOpError {
     }
 }
 
+impl FileOpError {
+    fn is_permission_denied(&self) -> bool {
+        match self {
+            FileOpError::IoError(e) => e.kind() == std::io::ErrorKind::PermissionDenied,
+            FileOpError::TrashError(msg) => {
+                msg.contains("Access is denied")
+                    || msg.contains("アクセスが拒否されました")
+                    || msg.contains("os error 5")
+                    || msg.contains("Some operations were aborted")
+            }
+            _ => false,
+        }
+    }
+}
+
 impl From<std::io::Error> for FileOpError {
     fn from(e: std::io::Error) -> Self {
         FileOpError::IoError(e)
@@ -331,6 +346,8 @@ pub struct ProgressState {
     pub succeeded_paths: Vec<PathBuf>,
     pub result_path: Option<PathBuf>,
     pub log_entries: Vec<String>,
+    /// Sources that failed due to PermissionDenied (candidates for elevated retry)
+    pub elevation_sources: Vec<PathBuf>,
 }
 
 impl ProgressHandle {
@@ -350,6 +367,7 @@ impl ProgressHandle {
                 succeeded_paths: Vec::new(),
                 result_path: None,
                 log_entries: Vec::new(),
+                elevation_sources: Vec::new(),
             })),
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }
@@ -363,7 +381,7 @@ impl ProgressHandle {
         self.cancel_flag.store(true, Ordering::Relaxed);
     }
 
-    fn log(&self, entry: String) {
+    pub(crate) fn log(&self, entry: String) {
         self.state.lock().log_entries.push(entry);
     }
 
@@ -383,7 +401,11 @@ impl ProgressHandle {
         self.state.lock().total_bytes = total_bytes;
     }
 
-    fn finish(&self, message: String, succeeded: Vec<PathBuf>, error: Option<String>, result_path: Option<PathBuf>) {
+    fn add_elevation_source(&self, path: PathBuf) {
+        self.state.lock().elevation_sources.push(path);
+    }
+
+    pub(crate) fn finish(&self, message: String, succeeded: Vec<PathBuf>, error: Option<String>, result_path: Option<PathBuf>) {
         let mut s = self.state.lock();
         // Add summary log unless it's a single-item batch op (which already has its own per-file log entry)
         let skip_summary = s.total == 1 && error.is_none() && !s.log_entries.is_empty();
@@ -423,21 +445,33 @@ fn run_batch_with_progress<F>(
                 progress.log(format!("{} {}", verb, name));
             }
             Err(e) => {
-                progress.log(format!("Error: {} - {}", name, e));
-                errors.push(e.to_string());
+                if e.is_permission_denied() {
+                    progress.add_elevation_source(path.clone());
+                    progress.log(format!("Access denied: {}", name));
+                } else {
+                    progress.log(format!("Error: {} - {}", name, e));
+                    errors.push(e.to_string());
+                }
             }
         }
         progress.update(&name, i + 1);
     }
 
+    let elevation_count = progress.state.lock().elevation_sources.len();
     let count = succeeded.len();
     let total = paths.len();
     let msg = if progress.is_cancelled() {
         format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
+    } else if elevation_count > 0 && errors.is_empty() && count == 0 {
+        "管理者権限が必要です".to_string()
+    } else if errors.is_empty() && elevation_count == 0 {
         format!("{} {} item(s)", verb, total)
     } else {
-        format!("Errors: {}", errors.join(", "))
+        let mut parts = errors.clone();
+        if elevation_count > 0 {
+            parts.push(format!("Access denied: {} item(s)", elevation_count));
+        }
+        format!("Errors: {}", parts.join(", "))
     };
     progress.finish(msg, succeeded, errors.first().cloned(), None);
 }
@@ -609,20 +643,32 @@ pub fn copy_batch_with_progress(
                 if progress.is_cancelled() {
                     break;
                 }
-                progress.log(format!("Error: {} - {}", file_name.to_string_lossy(), e));
-                errors.push(e.to_string());
+                if e.is_permission_denied() {
+                    progress.add_elevation_source(src.clone());
+                    progress.log(format!("Access denied: {}", file_name.to_string_lossy()));
+                } else {
+                    progress.log(format!("Error: {} - {}", file_name.to_string_lossy(), e));
+                    errors.push(e.to_string());
+                }
             }
         }
     }
 
+    let elevation_count = progress.state.lock().elevation_sources.len();
     let count = succeeded.len();
     let total = sources.len();
     let msg = if progress.is_cancelled() {
         format!("Cancelled ({}/{})", count, total)
-    } else if errors.is_empty() {
+    } else if elevation_count > 0 && errors.is_empty() && count == 0 {
+        "管理者権限が必要です".to_string()
+    } else if errors.is_empty() && elevation_count == 0 {
         format!("Copied {} item(s)", total)
     } else {
-        format!("Errors: {}", errors.join(", "))
+        let mut parts = errors.clone();
+        if elevation_count > 0 {
+            parts.push(format!("Access denied: {} item(s)", elevation_count));
+        }
+        format!("Errors: {}", parts.join(", "))
     };
     progress.finish(msg, succeeded, errors.first().cloned(), None);
 }

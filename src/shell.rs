@@ -45,6 +45,108 @@ pub fn open_with_text_editor(path: &std::path::Path) {
     }
 }
 
+/// Escape a path string for use inside PowerShell single-quoted strings.
+/// Single quotes are escaped by doubling them: ' → ''
+#[cfg(windows)]
+fn ps_escape(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Run a PowerShell script with elevated (administrator) privileges via UAC.
+/// Uses ShellExecuteExW with "runas" verb, waits for process completion.
+#[cfg(windows)]
+fn run_elevated_powershell(ps_script: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
+
+    let params = format!(
+        "-NoProfile -ExecutionPolicy Bypass -Command \"{}\"",
+        ps_script
+    );
+
+    let file: Vec<u16> = "powershell.exe\0".encode_utf16().collect();
+    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    let params_wide: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let mut sei = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params_wide.as_ptr()),
+        ..Default::default()
+    };
+
+    unsafe {
+        if ShellExecuteExW(&mut sei).is_err() {
+            return Err("UAC ダイアログがキャンセルされたか、昇格に失敗しました".to_string());
+        }
+
+        let process = sei.hProcess;
+        if process.is_invalid() || process.0.is_null() {
+            return Err("昇格プロセスのハンドルを取得できませんでした".to_string());
+        }
+
+        let wait_result = WaitForSingleObject(process, INFINITE);
+        if wait_result != WAIT_OBJECT_0 {
+            let _ = CloseHandle(process);
+            return Err("昇格プロセスの完了待機に失敗しました".to_string());
+        }
+
+        let mut exit_code: u32 = 1;
+        let _ = GetExitCodeProcess(process, &mut exit_code);
+        let _ = CloseHandle(process);
+
+        if exit_code != 0 {
+            return Err(format!("昇格操作が失敗しました (exit code: {})", exit_code));
+        }
+    }
+
+    Ok(())
+}
+
+/// Execute a copy or move operation with elevated (administrator) privileges.
+#[cfg(windows)]
+pub fn elevated_copy_or_move(
+    sources: &[std::path::PathBuf],
+    dest_dir: &std::path::Path,
+    is_move: bool,
+    overwrite: bool,
+) -> Result<(), String> {
+    let cmdlet = if is_move { "Move-Item" } else { "Copy-Item" };
+    let force_flag = if overwrite { " -Force" } else { "" };
+    let dest_escaped = ps_escape(&dest_dir.to_string_lossy());
+
+    let mut ps_commands: Vec<String> = Vec::new();
+    for src in sources {
+        let src_escaped = ps_escape(&src.to_string_lossy());
+        let recurse = if src.is_dir() { " -Recurse" } else { "" };
+        ps_commands.push(format!(
+            "{} -LiteralPath '{}' -Destination '{}'{}{}",
+            cmdlet, src_escaped, dest_escaped, recurse, force_flag
+        ));
+    }
+
+    run_elevated_powershell(&ps_commands.join("; "))
+}
+
+/// Execute a delete operation with elevated (administrator) privileges.
+#[cfg(windows)]
+pub fn elevated_delete(paths: &[std::path::PathBuf]) -> Result<(), String> {
+    let mut ps_commands: Vec<String> = Vec::new();
+    for path in paths {
+        let path_escaped = ps_escape(&path.to_string_lossy());
+        ps_commands.push(format!(
+            "Remove-Item -LiteralPath '{}' -Recurse -Force",
+            path_escaped
+        ));
+    }
+
+    run_elevated_powershell(&ps_commands.join("; "))
+}
+
 /// Copy or cut file paths to the Windows clipboard using CF_HDROP format.
 /// `is_cut` sets Preferred DropEffect to DROPEFFECT_MOVE, otherwise DROPEFFECT_COPY.
 #[cfg(windows)]

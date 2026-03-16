@@ -38,6 +38,9 @@ pub enum OpKind {
     ZipDecompress { zip_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
     TarDecompress { tar_path: std::path::PathBuf, dest_dir: std::path::PathBuf },
     StreamDecompress { path: std::path::PathBuf, dest_dir: std::path::PathBuf },
+    ElevatedCopy { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, overwrite: bool },
+    ElevatedMove { sources: Vec<std::path::PathBuf>, dest_dir: std::path::PathBuf, overwrite: bool },
+    ElevatedDelete { paths: Vec<std::path::PathBuf> },
 }
 
 pub struct ProgressDialog {
@@ -82,6 +85,19 @@ pub enum ConfirmAction {
     StreamDecompressOverwrite {
         path: std::path::PathBuf,
         dest_dir: std::path::PathBuf,
+    },
+    ElevatedCopy {
+        sources: Vec<std::path::PathBuf>,
+        dest_dir: std::path::PathBuf,
+        overwrite: bool,
+    },
+    ElevatedMove {
+        sources: Vec<std::path::PathBuf>,
+        dest_dir: std::path::PathBuf,
+        overwrite: bool,
+    },
+    ElevatedDelete {
+        paths: Vec<std::path::PathBuf>,
     },
 }
 

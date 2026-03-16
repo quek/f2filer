@@ -477,6 +477,47 @@ impl F2App {
     }
 
     pub(crate) fn start_background_op(&mut self, ctx: &egui::Context, op_kind: OpKind) {
+        #[cfg(windows)]
+        fn elevated_op(
+            sources: &[PathBuf],
+            dest_dir: &std::path::Path,
+            is_move: bool,
+            overwrite: bool,
+            handle: &file_ops::ProgressHandle,
+        ) {
+            let verb = if is_move { "Moved" } else { "Copied" };
+            match crate::shell::elevated_copy_or_move(sources, dest_dir, is_move, overwrite) {
+                Ok(()) => {
+                    let succeeded: Vec<PathBuf> = sources.to_vec();
+                    for src in sources {
+                        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        handle.log(format!("{} {} (admin)", verb, name));
+                    }
+                    handle.finish(
+                        format!("{} {} item(s) (admin)", verb, sources.len()),
+                        succeeded,
+                        None,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    handle.log(format!("Error: {}", e));
+                    handle.finish(e.clone(), Vec::new(), Some(e), None);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        fn elevated_op(
+            _sources: &[PathBuf],
+            _dest_dir: &std::path::Path,
+            _is_move: bool,
+            _overwrite: bool,
+            handle: &file_ops::ProgressHandle,
+        ) {
+            let msg = "Elevated operations are only supported on Windows".to_string();
+            handle.finish(msg.clone(), Vec::new(), Some(msg), None);
+        }
+
         let total = match &op_kind {
             OpKind::Copy { sources, .. } => sources.len(),
             OpKind::Move { sources, .. } => sources.len(),
@@ -486,6 +527,9 @@ impl F2App {
             OpKind::ZipDecompress { .. } => 1,
             OpKind::TarDecompress { .. } => 1,
             OpKind::StreamDecompress { .. } => 1,
+            OpKind::ElevatedCopy { sources, .. } => sources.len(),
+            OpKind::ElevatedMove { sources, .. } => sources.len(),
+            OpKind::ElevatedDelete { paths } => paths.len(),
         };
 
         let label = match &op_kind {
@@ -497,6 +541,9 @@ impl F2App {
             OpKind::ZipDecompress { .. } => "Decompressing",
             OpKind::TarDecompress { .. } => "Decompressing",
             OpKind::StreamDecompress { .. } => "Decompressing",
+            OpKind::ElevatedCopy { .. } => "Copying (Admin)",
+            OpKind::ElevatedMove { .. } => "Moving (Admin)",
+            OpKind::ElevatedDelete { .. } => "Deleting (Admin)",
         };
 
         let progress = file_ops::ProgressHandle::new(label, total);
@@ -529,6 +576,43 @@ impl F2App {
                 }
                 OpKind::StreamDecompress { path, dest_dir } => {
                     file_ops::decompress_stream_with_progress(&path, &dest_dir, &handle_clone);
+                }
+                OpKind::ElevatedCopy { sources, dest_dir, overwrite } => {
+                    let is_move = false;
+                    elevated_op(&sources, &dest_dir, is_move, overwrite, &handle_clone);
+                }
+                OpKind::ElevatedMove { sources, dest_dir, overwrite } => {
+                    let is_move = true;
+                    elevated_op(&sources, &dest_dir, is_move, overwrite, &handle_clone);
+                }
+                OpKind::ElevatedDelete { paths } => {
+                    #[cfg(windows)]
+                    {
+                        match crate::shell::elevated_delete(&paths) {
+                            Ok(()) => {
+                                let succeeded: Vec<PathBuf> = paths.clone();
+                                for p in &paths {
+                                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                    handle_clone.log(format!("Deleted {} (admin)", name));
+                                }
+                                handle_clone.finish(
+                                    format!("Deleted {} item(s) (admin)", paths.len()),
+                                    succeeded,
+                                    None,
+                                    None,
+                                );
+                            }
+                            Err(e) => {
+                                handle_clone.log(format!("Error: {}", e));
+                                handle_clone.finish(e.clone(), Vec::new(), Some(e), None);
+                            }
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let msg = "Elevated operations are only supported on Windows".to_string();
+                        handle_clone.finish(msg.clone(), Vec::new(), Some(msg), None);
+                    }
                 }
             }
             repaint_ctx.request_repaint();
