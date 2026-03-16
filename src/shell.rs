@@ -45,69 +45,23 @@ pub fn open_with_text_editor(path: &std::path::Path) {
     }
 }
 
-/// Escape a path string for use inside PowerShell single-quoted strings.
-/// Single quotes are escaped by doubling them: ' → ''
+/// Create an IShellItem from a file path.
 #[cfg(windows)]
-fn ps_escape(s: &str) -> String {
-    s.replace('\'', "''")
-}
+fn shell_item(path: &std::path::Path) -> Result<windows::Win32::UI::Shell::IShellItem, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName};
 
-/// Run a PowerShell script with elevated (administrator) privileges via UAC.
-/// Uses ShellExecuteExW with "runas" verb, waits for process completion.
-#[cfg(windows)]
-fn run_elevated_powershell(ps_script: &str) -> Result<(), String> {
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
-    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
-
-    let params = format!(
-        "-NoProfile -ExecutionPolicy Bypass -Command \"{}\"",
-        ps_script
-    );
-
-    let file: Vec<u16> = "powershell.exe\0".encode_utf16().collect();
-    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-    let params_wide: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
-
-    let mut sei = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS,
-        lpVerb: PCWSTR(verb.as_ptr()),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(params_wide.as_ptr()),
-        ..Default::default()
-    };
-
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let hstr = HSTRING::from_wide(&wide);
     unsafe {
-        if ShellExecuteExW(&mut sei).is_err() {
-            return Err("UAC ダイアログがキャンセルされたか、昇格に失敗しました".to_string());
-        }
-
-        let process = sei.hProcess;
-        if process.is_invalid() || process.0.is_null() {
-            return Err("昇格プロセスのハンドルを取得できませんでした".to_string());
-        }
-
-        let wait_result = WaitForSingleObject(process, INFINITE);
-        if wait_result != WAIT_OBJECT_0 {
-            let _ = CloseHandle(process);
-            return Err("昇格プロセスの完了待機に失敗しました".to_string());
-        }
-
-        let mut exit_code: u32 = 1;
-        let _ = GetExitCodeProcess(process, &mut exit_code);
-        let _ = CloseHandle(process);
-
-        if exit_code != 0 {
-            return Err(format!("昇格操作が失敗しました (exit code: {})", exit_code));
-        }
+        SHCreateItemFromParsingName::<_, _, IShellItem>(&hstr, None)
+            .map_err(|e| format!("{}: {}", path.display(), e))
     }
-
-    Ok(())
 }
 
-/// Execute a copy or move operation with elevated (administrator) privileges.
+/// Execute a copy or move operation using IFileOperation COM interface.
+/// Shows the same UAC elevation dialog as Windows Explorer.
 #[cfg(windows)]
 pub fn elevated_copy_or_move(
     sources: &[std::path::PathBuf],
@@ -115,36 +69,77 @@ pub fn elevated_copy_or_move(
     is_move: bool,
     overwrite: bool,
 ) -> Result<(), String> {
-    let cmdlet = if is_move { "Move-Item" } else { "Copy-Item" };
-    let force_flag = if overwrite { " -Force" } else { "" };
-    let dest_escaped = ps_escape(&dest_dir.to_string_lossy());
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::*;
 
-    let mut ps_commands: Vec<String> = Vec::new();
-    for src in sources {
-        let src_escaped = ps_escape(&src.to_string_lossy());
-        let recurse = if src.is_dir() { " -Recurse" } else { "" };
-        ps_commands.push(format!(
-            "{} -LiteralPath '{}' -Destination '{}'{}{}",
-            cmdlet, src_escaped, dest_escaped, recurse, force_flag
-        ));
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
+            .map_err(|e| format!("COM 初期化エラー: {}", e))?;
+
+        let mut flags = FOF_NOCONFIRMMKDIR | FOFX_REQUIREELEVATION;
+        if overwrite {
+            flags = flags | FOF_NOCONFIRMATION;
+        }
+        op.SetOperationFlags(flags).map_err(|e| format!("SetOperationFlags エラー: {}", e))?;
+
+        let dest_item = shell_item(dest_dir)?;
+        for src in sources {
+            let src_item = shell_item(src)?;
+            if is_move {
+                op.MoveItem(&src_item, &dest_item, None, None)
+                    .map_err(|e| format!("MoveItem エラー: {}", e))?;
+            } else {
+                op.CopyItem(&src_item, &dest_item, None, None)
+                    .map_err(|e| format!("CopyItem エラー: {}", e))?;
+            }
+        }
+
+        op.PerformOperations()
+            .map_err(|e| format!("操作の実行に失敗しました: {}", e))?;
+
+        let aborted = op.GetAnyOperationsAborted().map_err(|e| e.to_string())?;
+        if aborted.as_bool() {
+            return Err("操作がキャンセルされました".to_string());
+        }
     }
 
-    run_elevated_powershell(&ps_commands.join("; "))
+    Ok(())
 }
 
-/// Execute a delete operation with elevated (administrator) privileges.
+/// Execute a delete operation using IFileOperation COM interface.
+/// Shows the same UAC elevation dialog as Windows Explorer.
 #[cfg(windows)]
 pub fn elevated_delete(paths: &[std::path::PathBuf]) -> Result<(), String> {
-    let mut ps_commands: Vec<String> = Vec::new();
-    for path in paths {
-        let path_escaped = ps_escape(&path.to_string_lossy());
-        ps_commands.push(format!(
-            "Remove-Item -LiteralPath '{}' -Recurse -Force",
-            path_escaped
-        ));
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::*;
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
+            .map_err(|e| format!("COM 初期化エラー: {}", e))?;
+
+        let flags = FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR | FOFX_REQUIREELEVATION;
+        op.SetOperationFlags(flags).map_err(|e| format!("SetOperationFlags エラー: {}", e))?;
+
+        for path in paths {
+            let item = shell_item(path)?;
+            op.DeleteItem(&item, None)
+                .map_err(|e| format!("DeleteItem エラー: {}", e))?;
+        }
+
+        op.PerformOperations()
+            .map_err(|e| format!("操作の実行に失敗しました: {}", e))?;
+
+        let aborted = op.GetAnyOperationsAborted().map_err(|e| e.to_string())?;
+        if aborted.as_bool() {
+            return Err("操作がキャンセルされました".to_string());
+        }
     }
 
-    run_elevated_powershell(&ps_commands.join("; "))
+    Ok(())
 }
 
 /// Copy or cut file paths to the Windows clipboard using CF_HDROP format.
