@@ -228,6 +228,8 @@ pub struct F2App {
     pub(crate) sort_pending: bool,
     pub(crate) keybindings: KeyBindings,
     operation_log: VecDeque<String>,
+    #[cfg(windows)]
+    foreground_hook_installed: bool,
 }
 
 impl F2App {
@@ -303,6 +305,8 @@ impl F2App {
             sort_pending: false,
             keybindings,
             operation_log: VecDeque::new(),
+            #[cfg(windows)]
+            foreground_hook_installed: false,
         }
     }
 
@@ -701,6 +705,47 @@ impl eframe::App for F2App {
                 self.window_size = Some(rect.size());
             }
         });
+
+        // Force window to visual foreground on focus gain.
+        // 外部プロセス（AutoHotkey等）が SetForegroundWindow を呼ぶと、OS上はフォアグラウンドに
+        // なるが winit/egui が視覚的なZ順序を更新しないため、ウィンドウが裏に隠れたままになる。
+        //
+        // egui の ctx.input(|i| i.focused) は外部からのアクティベーションを反映しない。
+        // GetForegroundWindow() のポーリングは、非フォーカス時に eframe が update() を
+        // 呼ばないため検出が遅れる（200ms間隔のリペイント要求が必要になり無駄）。
+        //
+        // 解決策: SetWinEventHook(EVENT_SYSTEM_FOREGROUND) でOSレベルのイベントを監視。
+        // フォアグラウンド変更の瞬間にコールバックが呼ばれ、AtomicBool フラグをセットし
+        // InvalidateRect で eframe を起こす。ポーリング不要。
+        //
+        // HWND_TOPMOST → HWND_NOTOPMOST: SetForegroundWindow 単体ではZ順序が更新されない
+        // ことがあるため、一時的に最前面にしてから解除することでZ順序の再計算を強制する。
+        #[cfg(windows)]
+        {
+            if !self.foreground_hook_installed {
+                self.foreground_hook_installed = true;
+                crate::focus::install_foreground_hook();
+            }
+
+            if crate::focus::take_foreground_flag() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetForegroundWindow, SetForegroundWindow,
+                    SetWindowPos, HWND_TOPMOST, HWND_NOTOPMOST,
+                    SWP_NOMOVE, SWP_NOSIZE,
+                };
+                let fg = unsafe { GetForegroundWindow() };
+                if !fg.is_invalid() {
+                    unsafe {
+                        let _ = SetForegroundWindow(fg);
+                        let flags = SWP_NOMOVE | SWP_NOSIZE;
+                        let _ = SetWindowPos(fg, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                        let _ = SetWindowPos(fg, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+                    }
+                }
+            }
+        }
 
         // Apply dark mode
         ctx.set_visuals(egui::Visuals::dark());

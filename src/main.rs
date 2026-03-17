@@ -6,6 +6,8 @@ mod dialog;
 mod dialog_handler;
 #[cfg(windows)]
 mod drag_drop;
+#[cfg(windows)]
+mod focus;
 mod file_item;
 mod file_ops;
 mod keybind;
