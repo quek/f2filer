@@ -27,15 +27,11 @@ use app::F2App;
 use config::Config;
 
 fn load_icon() -> eframe::egui::IconData {
-    let icon_bytes = include_bytes!("../assets/icon.png");
-    let img = image::load_from_memory(icon_bytes)
-        .expect("Failed to load icon")
-        .into_rgba8();
-    let (w, h) = img.dimensions();
+    let rgba = include_bytes!(concat!(env!("OUT_DIR"), "/f2filer_icon.rgba"));
     eframe::egui::IconData {
-        rgba: img.into_raw(),
-        width: w,
-        height: h,
+        rgba: rgba.to_vec(),
+        width: 32,
+        height: 32,
     }
 }
 

@@ -45,6 +45,7 @@ impl From<std::io::Error> for FileOpError {
 
 /// Copy a file or directory without overwrite (without progress tracking).
 /// Returns `AlreadyExists` if the destination already exists.
+#[cfg(test)]
 pub fn copy_file_or_dir(src: &Path, dest_dir: &Path) -> Result<(), FileOpError> {
     copy_file_or_dir_inner_simple(src, dest_dir, false)
 }
