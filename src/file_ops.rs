@@ -1183,12 +1183,16 @@ pub fn decompress_stream_with_progress(
 #[cfg(windows)]
 pub fn get_drives() -> Vec<String> {
     let mut drives = Vec::new();
-    // Check drives A-Z
-    for letter in b'A'..=b'Z' {
-        let drive = format!("{}:\\", letter as char);
-        let path = Path::new(&drive);
-        if path.exists() {
-            drives.push(format!("{}:", letter as char));
+    // Use GetLogicalDrives() to get available drives instantly without I/O
+    // (path.exists() can block for minutes on slow/disconnected network drives)
+    unsafe extern "system" {
+        fn GetLogicalDrives() -> u32;
+    }
+    let bitmask = unsafe { GetLogicalDrives() };
+    for i in 0..26u32 {
+        if bitmask & (1 << i) != 0 {
+            let letter = (b'A' + i as u8) as char;
+            drives.push(format!("{}:", letter));
         }
     }
     // Detect WSL distributions via wsl.exe (read_dir on UNC server root is unsupported)

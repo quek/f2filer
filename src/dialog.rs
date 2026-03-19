@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use eframe::egui;
+use parking_lot::Mutex;
 
 use crate::config::RegisteredDir;
 use crate::file_ops;
@@ -130,7 +133,7 @@ pub struct MessageDialog {
 
 pub struct DriveDialog {
     /// (drive_name, space_label) e.g. ("C:", "120.5G / 500.0G")
-    pub drives: Vec<(String, String)>,
+    pub drives: Arc<Mutex<Vec<(String, String)>>>,
     pub cursor: usize,
 }
 
@@ -395,7 +398,7 @@ fn show_message_dialog(ctx: &egui::Context, dialog: &MessageDialog) -> DialogRes
 
 fn show_drive_dialog(ctx: &egui::Context, dialog: &mut DriveDialog) -> DialogResult {
     let mut result = DialogResult::None;
-    let drives = dialog.drives.clone();
+    let drives = dialog.drives.lock().clone();
     let mut open = true;
 
     egui::Window::new("Select Drive")

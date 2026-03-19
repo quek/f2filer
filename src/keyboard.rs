@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use eframe::egui;
 
@@ -785,29 +786,35 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
 
     // Drive selection
     if a.drive_select {
-        use crate::file_ops::{get_drive_space, format_size_human};
         let drives_list = app.drives.lock().clone();
-        let drives = drives_list.iter().map(|name| {
-            let root = if name.contains(':') && !name.starts_with("WSL:") {
-                format!("{}\\", name)
-            } else {
-                String::new()
-            };
-            let space = if !root.is_empty() {
-                get_drive_space(&root).map(|(free, total)| {
+        // Open dialog immediately with drive names (no space info yet)
+        let drives: Vec<(String, String)> = drives_list.iter().map(|name| {
+            (name.clone(), String::new())
+        }).collect();
+        let drives_arc = Arc::new(parking_lot::Mutex::new(drives));
+        app.dialog.drive = Some(DriveDialog { drives: Arc::clone(&drives_arc), cursor: 0 });
+        // Fetch drive space info in background
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            use crate::file_ops::{get_drive_space, format_size_human};
+            for (i, name) in drives_list.iter().enumerate() {
+                let root = if name.contains(':') && !name.starts_with("WSL:") {
+                    format!("{}\\", name)
+                } else {
+                    continue;
+                };
+                if let Some((free, total)) = get_drive_space(&root) {
                     let used_pct = if total > 0 {
                         ((total - free) as f64 / total as f64 * 100.0) as u64
                     } else {
                         0
                     };
-                    format!("{} / {} ({}%)", format_size_human(free), format_size_human(total), used_pct)
-                }).unwrap_or_default()
-            } else {
-                String::new()
-            };
-            (name.clone(), space)
-        }).collect();
-        app.dialog.drive = Some(DriveDialog { drives, cursor: 0 });
+                    let space = format!("{} / {} ({}%)", format_size_human(free), format_size_human(total), used_pct);
+                    drives_arc.lock()[i].1 = space;
+                    repaint_ctx.request_repaint();
+                }
+            }
+        });
     }
 
     // Registered directories
