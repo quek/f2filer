@@ -786,18 +786,29 @@ fn handle_misc_keys(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags) {
 
     // Drive selection
     if a.drive_select {
-        let drives_list = app.drives.lock().clone();
-        // Open dialog immediately with drive names (no space info yet)
-        let drives: Vec<(String, String)> = drives_list.iter().map(|name| {
+        // Show dialog immediately with cached drives, then refresh in background
+        let cached_list = app.drives.lock().clone();
+        let drives: Vec<(String, String)> = cached_list.iter().map(|name| {
             (name.clone(), String::new())
         }).collect();
         let drives_arc = Arc::new(parking_lot::Mutex::new(drives));
         app.dialog.drive = Some(DriveDialog { drives: Arc::clone(&drives_arc), cursor: 0 });
-        // Fetch drive space info in background
+        // Re-enumerate drives and fetch space info in background
+        let drives_cache = Arc::clone(&app.drives);
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
-            use crate::file_ops::{get_drive_space, format_size_human};
-            for (i, name) in drives_list.iter().enumerate() {
+            use crate::file_ops::{get_drives, get_drive_space, format_size_human};
+            let fresh_list = get_drives();
+            // Update the app-level cache
+            *drives_cache.lock() = fresh_list.clone();
+            // Update dialog entries with fresh drive list
+            {
+                let mut dialog_drives = drives_arc.lock();
+                *dialog_drives = fresh_list.iter().map(|name| (name.clone(), String::new())).collect();
+            }
+            repaint_ctx.request_repaint();
+            // Fetch space info for each drive
+            for (i, name) in fresh_list.iter().enumerate() {
                 let root = if name.contains(':') && !name.starts_with("WSL:") {
                     format!("{}\\", name)
                 } else {
