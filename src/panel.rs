@@ -128,6 +128,23 @@ fn truncate_middle(s: &str, max_width: usize) -> String {
     truncate_middle_px(s, max_width as f32, |c| char_display_width(c) as f32)
 }
 
+/// Check if any file entry's size on disk differs from the in-memory value.
+/// Uses `symlink_metadata` (fresh stat call per file) to bypass any directory cache.
+fn any_entry_size_changed(entries: &[FileItem]) -> bool {
+    for item in entries {
+        if item.name == ".." || item.is_dir {
+            continue;
+        }
+        let Ok(meta) = item.path.symlink_metadata() else {
+            continue;
+        };
+        if meta.len() != item.size {
+            return true;
+        }
+    }
+    false
+}
+
 pub struct FilePanel {
     pub current_dir: PathBuf,
     pub entries: Vec<FileItem>,
@@ -648,7 +665,11 @@ impl FilePanel {
             .and_then(|m| m.modified())
             .ok();
         if current_mtime == self.last_dir_modified {
-            return false;
+            // Directory mtime unchanged (no file add/remove).
+            // Check if any file's on-disk size differs from our in-memory entries.
+            if !any_entry_size_changed(&self.entries) {
+                return false;
+            }
         }
         self.last_dir_modified = current_mtime;
 
@@ -1413,5 +1434,23 @@ mod tests {
     #[test]
     fn truncate_middle_empty() {
         assert_eq!(truncate_middle("", 5), "");
+    }
+
+    #[test]
+    fn any_entry_size_changed_detects_modification() {
+        let dir = std::env::temp_dir().join("f2filer_size_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let file_path = dir.join("a.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let entries = crate::file_item::read_directory(&dir);
+        assert!(!any_entry_size_changed(&entries), "should not detect change before modification");
+
+        std::fs::write(&file_path, "hello world - bigger").unwrap();
+        assert!(any_entry_size_changed(&entries), "should detect size change");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
