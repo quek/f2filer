@@ -156,7 +156,11 @@ impl ImageCache {
             let texture = ctx.load_texture(
                 format!("{}#frame{}", path.to_string_lossy(), i),
                 color_image,
-                egui::TextureOptions::LINEAR,
+                egui::TextureOptions {
+                    magnification: egui::TextureFilter::Nearest,
+                    minification: egui::TextureFilter::Linear,
+                    ..Default::default()
+                },
             );
 
             total_duration_ms += frame.delay_ms;
