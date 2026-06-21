@@ -727,7 +727,10 @@ impl eframe::App for F2App {
                 crate::focus::install_foreground_hook();
             }
 
-            if crate::focus::take_foreground_flag() {
+            // フォーカス追従（マウスホバー）で「ウィンドウを前面に移動しない」設定の場合は
+            // Z 順序を持ち上げない。キーボードフォーカスは OS のホバー有効化に委ねる。
+            if crate::focus::take_foreground_flag() && crate::focus::should_raise_on_foreground()
+            {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 
                 use windows::Win32::UI::WindowsAndMessaging::{
