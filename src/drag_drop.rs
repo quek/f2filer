@@ -8,6 +8,7 @@ use windows::Win32::System::Com::*;
 use windows::Win32::System::Memory::*;
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
+use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
 const CF_HDROP_VALUE: u16 = 15;
 
@@ -261,6 +262,15 @@ pub fn start_drag(paths: &[PathBuf]) -> bool {
 
     unsafe {
         let Ok(hglobal) = build_hdrop(paths) else { return false };
+
+        // DoDragDrop はマウスをキャプチャするが、キャプチャできるのはフォアグラウンド
+        // ウィンドウのみ（MSDN: "Only the foreground window can capture the mouse"）。
+        // フォーカス追従（前面に移動しない）設定では、ドラッグ開始時に自ウィンドウが
+        // フォアグラウンドでないことがあり、その場合キャプチャに失敗してドラッグできない。
+        // ドラッグは明示操作なので、ここで自ウィンドウをフォアグラウンド化してから開始する。
+        if let Some(hwnd) = crate::focus::main_hwnd() {
+            let _ = SetForegroundWindow(hwnd);
+        }
 
         let data_obj: IDataObject = FileDataObject { hglobal }.into();
         let drop_source: IDropSource = DropSource.into();
