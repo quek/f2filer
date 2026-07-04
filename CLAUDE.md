@@ -66,6 +66,7 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - Settings ダイアログはタブ式（Font / Keybindings）。`SettingsSection` enum で切替。Keybindings タブではアクション一覧を表示し、Enter で選択→キー入力でバインド変更。競合検出・確認ダイアログ付き。`d` キーでデフォルトに戻す
 - egui Window のスクロールは `.vscroll(true)` を Window 自体に設定するのが最も安定。内側に独自 ScrollArea を配置すると、スクロール位置の永続化やサイズ計算で問題が起きやすい
 - egui の `key_pressed()` はイベントを消費しないため、同一フレームで複数箇所が true を返す。サブモードで Escape を処理する場合は `input_mut(|i| i.consume_key(...))` を使い、外側のダイアログ閉じ処理にイベントが伝播しないようにする
+- プログレス（コピー/移動等）の Esc 一括キャンセルは `update()` 末尾で走るグローバルハンドラ。ダイアログ/コマンドモード/フィルタが開いた状態の Esc は「そのUIを閉じる」意図なのでキャンセルを発火させない。判定は `escape_claimed_by_ui`（`dialog.is_open() || command_mode || filter_has_focus`）だが、これらは同フレーム内（`show_dialogs`・中央パネル描画）で false に変わるため、**`show_dialogs` の前でスナップショットを取る**こと。後段で読むと既に閉じられており漏れる（`p` でドライブダイアログ→Esc でコピーごと消えるバグの原因だった）
 - egui ダイアログのサイズ制御: `constrain(true)` は位置とサイズ両方を制限する。`default_width`/`default_height` は初回表示時のみ適用（以降は egui が記憶）。`set_min_width` はリサイズの下限を強制するため `default_width` を使う。スクロールが必要なダイアログは Window の `.vscroll(true)` に統一し、内側 ScrollArea は使わない
 - ステータスバーのメッセージは `set_status()` / `set_status_error()` で設定。エラーメッセージは赤太字（`Color32::from_rgb(255, 80, 80)`）で表示。`status_message` フィールドに直接代入しないこと
 - プレビューのサイズ制限: テキスト 1MB (`MAX_PREVIEW_BYTES`)、アーカイブ 10,000件 (`MAX_ARCHIVE_ENTRIES`)、音声スキャン 5秒、画像 200MB (`MAX_IMAGE_FILE_SIZE`)

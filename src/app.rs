@@ -793,6 +793,14 @@ impl eframe::App for F2App {
             }
         }
 
+        // Snapshot whether Escape belongs to an open dialog / command mode / filter
+        // BEFORE those states are dismissed this frame. egui's key_pressed() does not
+        // consume the event, so without this the same Escape that closes a dialog would
+        // also reach the progress-cancel handler below and abort an in-flight operation.
+        let escape_claimed_by_ui = self.dialog.is_open()
+            || self.command_mode
+            || self.active_panel().filter_has_focus;
+
         // Handle dialog results
         let result = show_dialogs(ctx, &mut self.dialog);
         crate::dialog_handler::handle_dialog_result(self, ctx, result);
@@ -973,8 +981,12 @@ impl eframe::App for F2App {
                         });
                 });
 
-            // Escape key cancellation (cancel all active operations)
+            // Escape key cancellation (cancel all active operations).
+            // Skip when Escape was claimed by a dialog / command mode / filter so that,
+            // e.g., closing the drive dialog (opened with `p`) mid-copy does not also
+            // cancel the copy.
             if !self.dialog.progress.is_empty()
+                && !escape_claimed_by_ui
                 && ctx.input(|i| i.key_pressed(egui::Key::Escape))
             {
                 for p in &self.dialog.progress {
