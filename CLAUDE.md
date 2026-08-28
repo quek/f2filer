@@ -52,7 +52,10 @@ Note: MSYS2 bash環境から `make` を実行すると `link.exe` が `C:\WINDOW
 - ファイルリストのカラムは `ui.painter().text()` で直接ピクセル位置に描画（レイアウトシステムをバイパス）
 - WSL ディストリビューションは `wsl.exe --list --quiet`（UTF-16LE）で検出しドライブ一覧に `WSL:distro` として統合（`read_dir` は UNC サーバー名に非対応）
 - UNC パスの識別は `std::path::Prefix::UNC` を使用し、WSL 固有ではなく汎用的に処理
-- UNC パス上のファイル削除はゴミ箱が使えないため `fs::remove_file` / `fs::remove_dir_all` にフォールバック
+- ネットワーク上のファイル削除はゴミ箱が使えないため `fs::remove_file` / `fs::remove_dir_all` にフォールバック。判定は `file_ops::is_network_path()` が唯一の情報源（削除の実処理・確認ダイアログの文言・undo履歴の記録がここで一致していないと破綻する）。UNC は `Prefix::UNC` / `Prefix::VerbatimUNC`、マップされたネットワークドライブ（`Z:` 等）は `Prefix::Disk` / `Prefix::VerbatimDisk` から `GetDriveTypeW` で `DRIVE_REMOTE` を判定する。**`starts_with(r"\\")` の文字列判定を使ってはいけない**——マップドライブを取りこぼし、逆に `canonicalize()` が返す `\\?\C:\...`（ローカル）を誤検出する
+- `trash::delete` はネットワーク上のパスでは絶対に成功しない。内部で `canonicalize()` してから先頭4文字 `\\?\` のみを剥がすため、`\\?\UNC\server\share\...` が相対パス扱いの `UNC\server\share\...` になり `0x80070002` で失敗する。マップドライブも `canonicalize()` で UNC に解決されるため同じ経路に落ちる
+- ネットワーク削除は完全削除になるため undo 履歴に積まない（`dialog_handler.rs`）。`UndoHistory::undo` は失敗した操作をスタックに戻す実装なので、復元不能な削除を積むとそれ以降すべての undo がその1件に閉じ込められる
+- `GetDriveTypeW` はドライブレターのルート（`"X:\"`、末尾のバックスラッシュ必須）でのみ呼ぶこと。この形なら切断中でもマウントテーブルのキャッシュから数マイクロ秒で返るが、UNC パスを渡すと1秒以上ブロックしうる（UIスレッド禁止事項）
 - UNC share root（`\\server\share`）からの上方ナビゲーションは Rust の `Path::parent()` が `None` を返すことで自然に防止される
 - ディレクトリ読み込み (`read_directory`) はバックグラウンドスレッドで非同期実行し、読み込み中はスピナーを表示。generation カウンタで古い結果を破棄
 - **UIスレッドで `path.exists()` や `fs::metadata()` など I/O ブロッキング呼び出しを行わないこと。** HDD/ネットワーク/WSL ドライブでは数秒かかる場合がある。`navigate_to_with_resolver` でパス解決も含めてバックグラウンドで実行する

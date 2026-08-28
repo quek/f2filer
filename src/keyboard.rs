@@ -411,9 +411,11 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
         if !targets.is_empty() {
             let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
             let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
-            let is_unc = paths.iter().any(|p| p.to_string_lossy().starts_with(r"\\"));
+            // Must match `file_ops::delete_to_trash`'s own branch, or the dialog
+            // promises a recycle bin the delete will not use
+            let is_network = paths.iter().any(|p| file_ops::is_network_path(p));
             let list = format_name_list(&names);
-            let message = if is_unc {
+            let message = if is_network {
                 format!(
                     "PERMANENTLY delete {} item(s)?\n{}\n\nNetwork path: recycle bin is not available.",
                     names.len(), list
@@ -422,7 +424,7 @@ fn handle_file_operations(app: &mut F2App, ctx: &egui::Context, a: &ActionFlags)
                 format!("Delete {} item(s)?\n{}", names.len(), list)
             };
             app.dialog.confirm = Some(ConfirmDialog {
-                title: if is_unc {
+                title: if is_network {
                     "Delete (permanent)".to_string()
                 } else {
                     "Delete".to_string()

@@ -160,25 +160,91 @@ fn move_file_or_dir_inner(src: &Path, dest_dir: &Path, overwrite: bool) -> Resul
 }
 
 pub fn delete_to_trash(path: &Path) -> Result<(), FileOpError> {
-    // UNC paths (including WSL) have no recycle bin; fall back to permanent deletion
-    if is_unc_path(path) {
+    // Network locations have no recycle bin; fall back to permanent deletion.
+    // `trash::delete` cannot handle them at all: it canonicalizes first, which
+    // turns both UNC paths and mapped network drives into `\\?\UNC\server\share\…`,
+    // then strips only the 4-char `\\?\` prefix and hands the shell the leftover
+    // relative string `UNC\server\share\…`, failing with 0x80070002.
+    if is_network_path(path) {
         return delete_permanently_simple(path);
     }
     trash::delete(path).map_err(|e| FileOpError::TrashError(e.to_string()))
 }
 
-/// Simple permanent deletion without shredding (for UNC/network paths)
+/// Simple permanent deletion without shredding (for network paths)
 fn delete_permanently_simple(path: &Path) -> Result<(), FileOpError> {
-    if path.is_dir() {
+    // Read-only files are common on shares and block `remove_file`
+    clear_readonly(path);
+    // `symlink_metadata` reports stat failures instead of silently treating an
+    // unreadable directory as a file the way `Path::is_dir()` does
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_dir() {
         fs::remove_dir_all(path)?;
+    } else if meta.is_symlink() && path.is_dir() {
+        // Directory symlink/junction: drop the link, never the target's contents
+        fs::remove_dir(path)?;
     } else {
         fs::remove_file(path)?;
     }
     Ok(())
 }
 
-fn is_unc_path(path: &Path) -> bool {
-    path.to_string_lossy().starts_with(r"\\")
+/// Best-effort clearing of the read-only attribute. Failures are ignored so the
+/// delete itself reports the real error.
+fn clear_readonly(path: &Path) {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if meta.permissions().readonly() {
+        let mut perms = meta.permissions();
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+}
+
+/// Returns true if `path` lives on a network location: a UNC share (including
+/// WSL) or a drive letter mapped to a remote share. Such locations have no
+/// recycle bin.
+///
+/// Single source of truth for the whole app — the delete confirmation wording
+/// and the undo bookkeeping must agree with what `delete_to_trash` actually does.
+#[cfg(windows)]
+pub fn is_network_path(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return false; // relative path: resolved against the CWD, treat as local
+    };
+    match prefix.kind() {
+        Prefix::UNC(..) | Prefix::VerbatimUNC(..) => true,
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => is_remote_drive(letter),
+        // Device namespace (`\\.\PhysicalDrive0`) and verbatim non-disk paths are
+        // never network shares. Note `\\?\C:\…` lands in VerbatimDisk above, so a
+        // canonicalized local path is correctly classified as local.
+        Prefix::DeviceNS(_) | Prefix::Verbatim(_) => false,
+    }
+}
+
+/// True if the drive letter is mapped to a remote share.
+///
+/// Only ever called with a bare drive-letter root: `GetDriveTypeW` answers that
+/// form from the cached mount table in microseconds even while the share is
+/// disconnected, whereas handing it a UNC path can block for over a second —
+/// unacceptable on the UI thread.
+#[cfg(windows)]
+fn is_remote_drive(letter: u8) -> bool {
+    const DRIVE_REMOTE: u32 = 4;
+    unsafe extern "system" {
+        fn GetDriveTypeW(lpRootPathName: *const u16) -> u32;
+    }
+    // `GetDriveTypeW` requires the trailing backslash: "X:\" plus NUL terminator
+    let root: [u16; 4] = [letter as u16, u16::from(b':'), u16::from(b'\\'), 0];
+    unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_REMOTE }
+}
+
+#[cfg(not(windows))]
+pub fn is_network_path(_path: &Path) -> bool {
+    false
 }
 
 pub fn delete_permanently(path: &Path) -> Result<(), FileOpError> {
@@ -1813,6 +1879,62 @@ mod tests {
         fs::write(sub.join("b.txt"), "bbb").unwrap();
 
         delete_permanently(&dir).unwrap();
+        assert!(!dir.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn network_path_classification() {
+        // UNC shares (including WSL) have no recycle bin
+        assert!(is_network_path(Path::new(r"\\server\share\file.txt")));
+        assert!(is_network_path(Path::new(r"\\?\UNC\server\share\file.txt")));
+        assert!(is_network_path(Path::new(r"\\wsl$\Ubuntu\home\user\file.txt")));
+
+        // Verbatim local paths start with two backslashes but are NOT network
+        // paths. `std::fs::canonicalize` hands back exactly this form, so the
+        // old `starts_with(r"\\")` check would have permanently deleted a local
+        // file with no recycle bin and no warning.
+        assert_eq!(
+            is_network_path(Path::new(r"\\?\C:\Windows\file.txt")),
+            is_network_path(Path::new(r"C:\Windows\file.txt"))
+        );
+
+        // Device namespace is not a share
+        assert!(!is_network_path(Path::new(r"\\.\PhysicalDrive0")));
+
+        // Relative paths resolve against the CWD; treat as local
+        assert!(!is_network_path(Path::new("file.txt")));
+        assert!(!is_network_path(Path::new(r"sub\file.txt")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unmapped_drive_letter_is_not_network() {
+        // An unused letter reports DRIVE_NO_ROOT_DIR, not DRIVE_REMOTE
+        assert!(!is_remote_drive(b'Q'));
+    }
+
+    #[test]
+    fn delete_permanently_simple_clears_readonly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("ro.txt");
+        fs::write(&file, "data").unwrap();
+        let mut perms = fs::metadata(&file).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&file, perms).unwrap();
+
+        delete_permanently_simple(&file).unwrap();
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_permanently_simple_removes_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("d");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+
+        delete_permanently_simple(&dir).unwrap();
         assert!(!dir.exists());
     }
 

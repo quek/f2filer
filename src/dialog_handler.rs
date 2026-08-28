@@ -380,9 +380,17 @@ pub(crate) fn handle_progress_finished(
                 app.undo_history.push(FileOperation::Move { moves });
             }
             OpKind::Delete { .. } => {
-                app.undo_history.push(FileOperation::Delete {
-                    paths: succeeded_paths,
-                });
+                // Network deletes bypass the recycle bin (see `file_ops::delete_to_trash`),
+                // so there is nothing to restore for those paths. Recording them would make
+                // Undo fail with "Items not found in trash", and `UndoHistory::undo` pushes a
+                // failed operation back onto the stack — wedging every older undo behind it.
+                let recoverable: Vec<PathBuf> = succeeded_paths
+                    .into_iter()
+                    .filter(|p| !file_ops::is_network_path(p))
+                    .collect();
+                if !recoverable.is_empty() {
+                    app.undo_history.push(FileOperation::Delete { paths: recoverable });
+                }
             }
             OpKind::DeletePermanent { .. } => {
                 // No undo for permanent delete
