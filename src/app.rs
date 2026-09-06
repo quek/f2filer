@@ -1071,7 +1071,7 @@ impl eframe::App for F2App {
                 egui::Frame::default()
                     .inner_margin(4.0)
                     .stroke(egui::Stroke::new(
-                        if is_active { 2.0 } else { 1.0 },
+                        if is_active { 2.0_f32 } else { 1.0_f32 },
                         if is_active {
                             egui::Color32::from_rgb(80, 120, 200)
                         } else {
@@ -1105,7 +1105,7 @@ impl eframe::App for F2App {
                 egui::Frame::default()
                     .inner_margin(4.0)
                     .stroke(egui::Stroke::new(
-                        if is_active { 2.0 } else { 1.0 },
+                        if is_active { 2.0_f32 } else { 1.0_f32 },
                         if is_active {
                             egui::Color32::from_rgb(80, 120, 200)
                         } else {
@@ -1271,7 +1271,7 @@ fn paint_drop_highlight(ui: &mut egui::Ui) {
     ui.painter().rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 150, 255)),
+        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(80, 150, 255)),
         egui::StrokeKind::Outside,
     );
 }

@@ -351,7 +351,7 @@ impl AudioPreview {
                 egui::pos2(rect.left(), center_y),
                 egui::pos2(rect.right(), center_y),
             ],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(60, 60, 80)),
+            egui::Stroke::new(0.5_f32, egui::Color32::from_rgb(60, 60, 80)),
         );
 
         let samples = {
@@ -407,7 +407,7 @@ impl AudioPreview {
 
             painter.line_segment(
                 [egui::pos2(x, y_top), egui::pos2(x, y_bottom)],
-                egui::Stroke::new(1.0, waveform_color),
+                egui::Stroke::new(1.0_f32, waveform_color),
             );
         }
 
@@ -417,7 +417,7 @@ impl AudioPreview {
             let x = rect.left() + ratio * rect.width();
             painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 200, 50)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(255, 200, 50)),
             );
         }
 
@@ -429,7 +429,7 @@ impl AudioPreview {
                 let x = rect.left() + ratio * rect.width();
                 painter.line_segment(
                     [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 80, 80)),
+                    egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 80, 80)),
                 );
             }
         }
