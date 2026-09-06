@@ -1,14 +1,24 @@
 #![allow(non_snake_case)]
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Memory::*;
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
-use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+};
+
+/// `DoDragDrop` がこれより早く戻った場合、ユーザー操作ではなく開始失敗（キャプチャ不可等）と
+/// みなして診断メッセージを返す。egui のドラッグ閾値を越えてから指を離すには最低でも
+/// 数十ミリ秒かかるため、正常なドラッグがこの時間内に完了することはない。
+const INSTANT_RETURN: Duration = Duration::from_millis(100);
 
 const CF_HDROP_VALUE: u16 = 15;
 
@@ -253,37 +263,104 @@ fn build_hdrop(paths: &[PathBuf]) -> Result<HGLOBAL> {
 
 // ─── Public API ───
 
+/// eframe の `Frame` からメインウィンドウの HWND を取得する。
+///
+/// フォアグラウンドフックが記録した HWND は、winit の補助ウィンドウ
+/// （"Winit Thread Event Target"）がフォアグラウンドになった場合にそちらを指すため
+/// 使わない。`Frame` の raw handle は常にメインウィンドウを指す。
+pub fn window_hwnd(frame: &eframe::Frame) -> Option<HWND> {
+    let handle = frame.window_handle().ok()?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as *mut core::ffi::c_void)),
+        _ => None,
+    }
+}
+
+/// 現在のフォアグラウンドウィンドウが自スレッドのものか。
+/// マウスキャプチャの可否はフォアグラウンド「スレッド」で決まるため、HWND の一致ではなく
+/// スレッド ID で判定する。
+unsafe fn is_foreground_thread() -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        !fg.is_invalid() && GetWindowThreadProcessId(fg, None) == GetCurrentThreadId()
+    }
+}
+
+/// 自ウィンドウをフォアグラウンドにし、実際に切り替わったかを返す。
+///
+/// `SetForegroundWindow` はフォアグラウンドロック（他プロセスが直前に入力を受けていた等）で
+/// 黙って拒否されることがある。その場合は現フォアグラウンドスレッドに入力キューを一時接続して
+/// 同一スレッド扱いにし、再試行する（`AttachThreadInput` による定番の回避策）。
+unsafe fn ensure_foreground(hwnd: HWND) -> bool {
+    unsafe {
+        if is_foreground_thread() {
+            return true;
+        }
+        let _ = SetForegroundWindow(hwnd);
+        if is_foreground_thread() {
+            return true;
+        }
+
+        let fg = GetForegroundWindow();
+        let fg_tid = GetWindowThreadProcessId(fg, None);
+        let cur_tid = GetCurrentThreadId();
+        if fg_tid != 0 && fg_tid != cur_tid && AttachThreadInput(cur_tid, fg_tid, true).as_bool() {
+            let _ = SetForegroundWindow(hwnd);
+            let _ = AttachThreadInput(cur_tid, fg_tid, false);
+        }
+        is_foreground_thread()
+    }
+}
+
 /// Start an OLE drag-and-drop operation with the given file paths.
-/// Returns `true` if the drop result was MOVE (caller should refresh source panel).
-pub fn start_drag(paths: &[PathBuf]) -> bool {
+///
+/// `hwnd` は自メインウィンドウ（`window_hwnd()`）。`None` ならフォアグラウンド化をスキップする。
+/// Returns `Ok(true)` if the drop result was MOVE (caller should refresh source panel).
+/// ドラッグが開始できなかったと判断した場合は診断メッセージを `Err` で返す。
+pub fn start_drag(paths: &[PathBuf], hwnd: Option<HWND>) -> std::result::Result<bool, String> {
     if paths.is_empty() {
-        return false;
+        return Ok(false);
     }
 
     unsafe {
-        let Ok(hglobal) = build_hdrop(paths) else { return false };
+        let hglobal = build_hdrop(paths).map_err(|e| format!("Drag failed: {e}"))?;
 
         // DoDragDrop はマウスをキャプチャするが、キャプチャできるのはフォアグラウンド
         // ウィンドウのみ（MSDN: "Only the foreground window can capture the mouse"）。
         // フォーカス追従（前面に移動しない）設定では、ドラッグ開始時に自ウィンドウが
         // フォアグラウンドでないことがあり、その場合キャプチャに失敗してドラッグできない。
         // ドラッグは明示操作なので、ここで自ウィンドウをフォアグラウンド化してから開始する。
-        if let Some(hwnd) = crate::focus::main_hwnd() {
-            let _ = SetForegroundWindow(hwnd);
-        }
+        let foreground_ok = match hwnd {
+            Some(hwnd) => ensure_foreground(hwnd),
+            None => is_foreground_thread(),
+        };
 
         let data_obj: IDataObject = FileDataObject { hglobal }.into();
         let drop_source: IDropSource = DropSource.into();
 
         let mut effect = DROPEFFECT_NONE;
+        let started = Instant::now();
         let hr = DoDragDrop(
             &data_obj,
             &drop_source,
             DROPEFFECT_COPY | DROPEFFECT_MOVE,
             &mut effect,
         );
+        let elapsed = started.elapsed();
 
         // HGLOBAL is freed by FileDataObject::drop when data_obj goes out of scope
-        hr == DRAGDROP_S_DROP && effect == DROPEFFECT_MOVE
+        if hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE {
+            return Ok(effect == DROPEFFECT_MOVE);
+        }
+        if elapsed < INSTANT_RETURN {
+            return Err(format!(
+                "Drag did not start (hr={:#x}, {}ms, foreground={}{}) - try again",
+                hr.0,
+                elapsed.as_millis(),
+                foreground_ok,
+                if hwnd.is_none() { ", no hwnd" } else { "" },
+            ));
+        }
+        Ok(false)
     }
 }

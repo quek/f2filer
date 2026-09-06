@@ -1284,6 +1284,7 @@ dependencies = [
  "image",
  "open",
  "parking_lot",
+ "raw-window-handle",
  "resvg",
  "rodio",
  "serde",

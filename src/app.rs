@@ -695,7 +695,7 @@ impl F2App {
 }
 
 impl eframe::App for F2App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Track window position and size
         ctx.input(|i| {
             if let Some(rect) = i.viewport().outer_rect {
@@ -1047,6 +1047,10 @@ impl eframe::App for F2App {
         }
 
         // Central panel: two file panels side by side
+        #[cfg(windows)]
+        let main_hwnd = crate::drag_drop::window_hwnd(frame);
+        #[cfg(windows)]
+        let mut drag_error: Option<String> = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             let tab = &mut self.tabs[self.active_tab];
             let active = tab.active;
@@ -1150,13 +1154,16 @@ impl eframe::App for F2App {
                     .take()
                     .or_else(|| right_panel.drag_request.take());
                 if let Some(paths) = drag_paths {
-                    let was_move = crate::drag_drop::start_drag(&paths);
                     // After OLE drag completes, ignore the next drop event
                     // (it may be the same files dropped back onto this window)
                     self.skip_next_drop = true;
-                    if was_move {
-                        left_panel.refresh();
-                        right_panel.refresh();
+                    match crate::drag_drop::start_drag(&paths, main_hwnd) {
+                        Ok(true) => {
+                            left_panel.refresh();
+                            right_panel.refresh();
+                        }
+                        Ok(false) => {}
+                        Err(e) => drag_error = Some(e),
                     }
                 }
             }
@@ -1165,6 +1172,10 @@ impl eframe::App for F2App {
                 self.tabs[self.active_tab].active = panel;
             }
         });
+        #[cfg(windows)]
+        if let Some(e) = drag_error {
+            self.set_status_error(e);
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

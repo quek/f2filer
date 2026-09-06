@@ -10,7 +10,7 @@
 //! 判定は `should_raise_on_foreground()` で行う。
 
 use core::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -25,23 +25,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 自プロセスがフォアグラウンドになったときにコールバックがセットするフラグ。
 static FOREGROUND_GAINED: AtomicBool = AtomicBool::new(false);
 
-/// 自プロセスのメインウィンドウ HWND（フォアグラウンド化時にコールバックが記録）。
-/// `0` は未記録。OLE ドラッグ開始時の `SetForegroundWindow` 用にハンドルを保持する。
-static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
-
 /// フラグを読み取ってクリアする。前回呼び出し以降にフォアグラウンドになっていれば true。
 pub fn take_foreground_flag() -> bool {
     FOREGROUND_GAINED.swap(false, Ordering::Relaxed)
-}
-
-/// 記録済みの自プロセスのメインウィンドウハンドルを返す。未記録なら `None`。
-pub fn main_hwnd() -> Option<HWND> {
-    let raw = MAIN_HWND.load(Ordering::Relaxed);
-    if raw == 0 {
-        None
-    } else {
-        Some(HWND(raw as *mut c_void))
-    }
 }
 
 /// EVENT_SYSTEM_FOREGROUND の SetWinEventHook を登録する。
@@ -104,7 +90,6 @@ unsafe extern "system" fn on_foreground_change(
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         if pid == GetCurrentProcessId() {
-            MAIN_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
             FOREGROUND_GAINED.store(true, Ordering::Relaxed);
             // eframe の update() を起動してフラグを処理させるためリペイントを要求
             let _ = InvalidateRect(Some(hwnd), None, false);
